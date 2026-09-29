@@ -1,0 +1,29 @@
+# Override for a GPU-equipped host, e.g.:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+#
+# Gives Ollama access to the NVIDIA runtime and switches the embedding model
+# in retrieval-service to run on cuda instead of cpu. Requires the
+# nvidia-container-toolkit installed on the host.
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  retrieval-service:
+    build:
+      args:
+        TORCH_VARIANT: cuda
+    environment:
+      EMBEDDING_DEVICE: cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

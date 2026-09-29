@@ -1,0 +1,25 @@
+http:
+  routers:
+    gateway-api:
+      rule: "PathPrefix(`/`)"
+      entryPoints: ["web"]
+      service: gateway-api
+      middlewares: ["rate-limit", "strip-ws-timeout"]
+
+  services:
+    gateway-api:
+      loadBalancer:
+        servers:
+          - url: "http://gateway-api:8000"
+
+  middlewares:
+    rate-limit:
+      rateLimit:
+        average: 20
+        burst: 40
+    strip-ws-timeout:
+      # WebSocket upgrades need a long idle timeout; REST calls don't.
+      # Traefik detects the Upgrade header automatically, this just documents intent.
+      headers:
+        customResponseHeaders:
+          X-Gateway: "codesage-traefik"

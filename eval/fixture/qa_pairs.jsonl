@@ -1,0 +1,5 @@
+{"id": "fix-1", "category": "exact_identifier", "question": "What is WIDGET_API_TOKEN_HEADER used for?", "expected_paths": ["auth.py"]}
+{"id": "fix-2", "category": "exact_identifier", "question": "What does SPROCKET_QUEUE_DEPTH configure?", "expected_paths": ["config.py"]}
+{"id": "fix-3", "category": "semantic", "question": "How is a widget API request authenticated?", "expected_paths": ["auth.py"]}
+{"id": "fix-4", "category": "semantic", "question": "How would you linearly interpolate between two numbers in this codebase?", "expected_paths": ["math_utils.py"]}
+{"id": "fix-5", "category": "code_specific", "question": "What function clamps a value between a minimum and maximum?", "expected_paths": ["math_utils.py"]}

@@ -1,0 +1,62 @@
+# Swap Ollama for vLLM as the LLM backend (higher throughput, better GPU
+# utilization for concurrent requests, the tradeoff most teams actually
+# care about for serving more than one user at a time).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.vllm.yml \
+#     up -d --build --scale ollama=0
+#
+# gateway-api talks to it over the same OpenAI-compatible client
+# (app/llm_client.py) used for Ollama; only the base URL changes.
+#
+# Model + flags: Qwen2.5-7B-Instruct-AWQ, not the originally-picked Mistral
+# v0.2 AWQ build, since v0.2 predates reliable native tool-calling, and
+# `--enable-auto-tool-choice --tool-call-parser hermes` (the parser Qwen2.5
+# was trained against) is required for vLLM's OpenAI server to emit
+# `tool_calls` at all; without both of these, /agent works for Ollama but
+# silently falls back to plain text on this backend. See
+# docs/architecture.md's tool-calling section for the three-backend support
+# matrix: vLLM is "supported given these flags", not zero-config like the
+# plain /chat path.
+services:
+  vllm:
+    image: vllm/vllm-openai:v0.6.2
+    command:
+      - "--model"
+      - "${VLLM_MODEL:-Qwen/Qwen2.5-7B-Instruct-AWQ}"
+      - "--quantization"
+      - "awq"
+      - "--max-model-len"
+      - "4096"
+      - "--enable-auto-tool-choice"
+      - "--tool-call-parser"
+      - "hermes"
+    volumes:
+      - vllm-cache:/root/.cache/huggingface
+    ports:
+      - "8001:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+        limits: { memory: 16G }
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/8000' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  gateway-api:
+    environment:
+      GATEWAY_LLM_BACKEND: vllm
+      GATEWAY_LLM_BASE_URL: http://vllm:8000/v1
+      GATEWAY_LLM_MODEL: ${VLLM_MODEL:-Qwen/Qwen2.5-7B-Instruct-AWQ}
+    depends_on:
+      vllm:
+        condition: service_healthy
+
+volumes:
+  vllm-cache:
