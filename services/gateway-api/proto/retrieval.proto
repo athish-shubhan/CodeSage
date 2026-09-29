@@ -1,0 +1,87 @@
+syntax = "proto3";
+
+package retrieval;
+
+// Retrieval service: embeds a source repo into a vector store and serves
+// hybrid (dense + lexical) chunk lookups, with context assembly and
+// optional reranking, for the gateway-api's RAG/agent pipeline.
+service Retrieval {
+  rpc Search (SearchRequest) returns (SearchResponse);
+  rpc IngestRepo (IngestRequest) returns (IngestResponse);
+  rpc ExpandContext (ExpandContextRequest) returns (ExpandContextResponse);
+  rpc GetFile (GetFileRequest) returns (GetFileResponse);
+  rpc Health (HealthRequest) returns (HealthResponse);
+}
+
+message SearchRequest {
+  string query = 1;
+  int32 top_k = 2;
+  string collection = 3;
+  bool use_reranker = 4;        // off by default -- see reranker.py
+  int32 max_context_tokens = 5; // 0 = server default
+  string strategy = 6;          // "" or "hybrid" (default), "dense", "lexical" -- for ablation
+}
+
+message Chunk {
+  string text = 1;
+  string source_path = 2;
+  int32 start_line = 3;
+  int32 end_line = 4;
+  float score = 5; // fusion score, or reranker score if use_reranker was set
+}
+
+message TraceSpan {
+  string stage = 1;
+  double ms = 2;
+  string meta_json = 3;
+}
+
+message SearchResponse {
+  repeated Chunk chunks = 1;
+  int32 context_tokens = 2;
+  double lexical_weight = 3;
+  repeated TraceSpan trace = 4;
+}
+
+message IngestRequest {
+  string repo_path = 1;
+  string collection = 2;
+  repeated string include_globs = 3;
+}
+
+message IngestResponse {
+  int32 files_indexed = 1;
+  int32 chunks_indexed = 2;
+}
+
+message ExpandContextRequest {
+  string collection = 1;
+  string source_path = 2;
+  int32 start_line = 3;
+  int32 end_line = 4;
+  int32 extra_lines = 5;
+}
+
+message ExpandContextResponse {
+  string text = 1;
+  bool found = 2;
+}
+
+message GetFileRequest {
+  string collection = 1;
+  string source_path = 2;
+  int32 max_bytes = 3;
+}
+
+message GetFileResponse {
+  string text = 1;
+  bool found = 2;
+  bool truncated = 3;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool ok = 1;
+  string vector_store_status = 2;
+}

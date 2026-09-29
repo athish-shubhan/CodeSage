@@ -1,0 +1,7 @@
+# Deliberately separate from ../../requirements.txt: `mcp` pulls a
+# starlette version incompatible with the pinned FastAPI build used by the
+# rest of gateway-api. Install this in its own venv, not alongside the
+# main app's dependencies.
+mcp>=2.0.0
+grpcio==1.66.2
+pydantic-settings==2.5.2

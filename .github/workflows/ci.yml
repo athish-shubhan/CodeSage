@@ -1,0 +1,205 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch: # lets eval-ablation be triggered manually from the Actions tab
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [gateway-api, retrieval-service]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Generate gRPC stubs
+        run: |
+          pip install grpcio-tools==1.66.2
+          cd services/${{ matrix.service }}
+          python -m grpc_tools.protoc -I proto --python_out=. --grpc_python_out=. proto/retrieval.proto
+
+      - name: Install dependencies
+        run: pip install -r services/${{ matrix.service }}/requirements.txt pytest pytest-asyncio
+
+      - name: Run tests
+        run: cd services/${{ matrix.service }} && python -m pytest tests/ -q
+
+  eval-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Generate gRPC stubs
+        run: |
+          pip install grpcio-tools==1.66.2
+          python -m grpc_tools.protoc -I services/retrieval-service/proto \
+            --python_out=eval --grpc_python_out=eval \
+            services/retrieval-service/proto/retrieval.proto
+      - name: Install dependencies
+        run: pip install httpx pytest
+      - name: Run eval harness unit tests
+        run: cd eval && python -m pytest tests/ -q
+
+  retrieval-smoke:
+    # Blocking CI gate for the Context Engineer story: ingests a tiny fixed
+    # fixture corpus into a real retrieval-service + Qdrant and asserts
+    # Recall@K doesn't regress. The full 22-question ablation against this
+    # repo's own content stays a workflow_dispatch-only job (see below) --
+    # slower, and not something every PR should block on.
+    runs-on: ubuntu-latest
+    needs: test
+    services:
+      qdrant:
+        image: qdrant/qdrant:v1.11.3
+        ports: ["6333:6333"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install retrieval-service dependencies (CPU-only torch)
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r services/retrieval-service/requirements.txt
+
+      - name: Generate gRPC stubs
+        run: |
+          python -m grpc_tools.protoc -I services/retrieval-service/proto \
+            --python_out=services/retrieval-service --grpc_python_out=services/retrieval-service \
+            services/retrieval-service/proto/retrieval.proto
+          python -m grpc_tools.protoc -I services/retrieval-service/proto \
+            --python_out=eval --grpc_python_out=eval \
+            services/retrieval-service/proto/retrieval.proto
+
+      - name: Start retrieval-service
+        working-directory: services/retrieval-service
+        env:
+          QDRANT_URL: http://localhost:6333
+        run: |
+          python server.py &
+          timeout 60 bash -c 'until curl -sf http://localhost:9101 >/dev/null; do sleep 2; done'
+
+      - name: Ingest fixture repo
+        run: |
+          python -c "
+          import sys, grpc
+          sys.path.insert(0, 'services/retrieval-service')
+          import retrieval_pb2, retrieval_pb2_grpc
+          channel = grpc.insecure_channel('localhost:50051')
+          stub = retrieval_pb2_grpc.RetrievalStub(channel)
+          resp = stub.IngestRepo(retrieval_pb2.IngestRequest(repo_path='eval/fixture/repo', collection='ci_fixture'), timeout=120)
+          print('ingested', resp.chunks_indexed, 'chunks from', resp.files_indexed, 'files')
+          "
+
+      - name: Run retrieval-smoke eval (blocking gate)
+        run: |
+          pip install httpx
+          cd eval
+          python run_eval.py --collection ci_fixture --qa-pairs fixture/qa_pairs.jsonl --min-recall 0.8
+
+  eval-ablation:
+    # The full 22-question hybrid/dense/lexical/rerank comparison against
+    # this repo's own content. Manual-trigger only: slower (real embedding
+    # model + full corpus ingest), and not something every PR should block on.
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    services:
+      qdrant:
+        image: qdrant/qdrant:v1.11.3
+        ports: ["6333:6333"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install retrieval-service dependencies (CPU-only torch)
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r services/retrieval-service/requirements.txt
+
+      - name: Generate gRPC stubs
+        run: |
+          python -m grpc_tools.protoc -I services/retrieval-service/proto \
+            --python_out=services/retrieval-service --grpc_python_out=services/retrieval-service \
+            services/retrieval-service/proto/retrieval.proto
+          python -m grpc_tools.protoc -I services/retrieval-service/proto \
+            --python_out=eval --grpc_python_out=eval \
+            services/retrieval-service/proto/retrieval.proto
+
+      - name: Start retrieval-service
+        working-directory: services/retrieval-service
+        env:
+          QDRANT_URL: http://localhost:6333
+        run: |
+          python server.py &
+          timeout 60 bash -c 'until curl -sf http://localhost:9101 >/dev/null; do sleep 2; done'
+
+      - name: Ingest this repo as the eval corpus
+        run: |
+          python -c "
+          import sys, grpc
+          sys.path.insert(0, 'services/retrieval-service')
+          import retrieval_pb2, retrieval_pb2_grpc
+          channel = grpc.insecure_channel('localhost:50051')
+          stub = retrieval_pb2_grpc.RetrievalStub(channel)
+          resp = stub.IngestRepo(retrieval_pb2.IngestRequest(repo_path='.', collection='codebase'), timeout=300)
+          print('ingested', resp.chunks_indexed, 'chunks from', resp.files_indexed, 'files')
+          "
+
+      - name: Run ablation
+        run: |
+          pip install httpx
+          cd eval && python ablation.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: eval/report.md
+
+  build-images:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build gateway-api image
+        run: docker build -t codesage/gateway-api:ci services/gateway-api
+
+      - name: Build retrieval-service image
+        run: docker build -t codesage/retrieval-service:ci services/retrieval-service
+
+  compose-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate compose files
+        run: |
+          docker compose -f docker-compose.yml config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.gpu.yml config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.vllm.yml config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.llamacpp.yml config --quiet
+
+  k8s-manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate manifests parse as YAML
+        run: |
+          pip install pyyaml
+          python -c "
+          import glob, yaml
+          for f in glob.glob('k8s/*.yaml'):
+              list(yaml.safe_load_all(open(f)))
+              print(f, 'OK')
+          "

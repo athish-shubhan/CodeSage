@@ -1,0 +1,52 @@
+# Swap Ollama for a raw llama.cpp `llama-server` as the LLM backend,
+# the lowest-overhead option, and the one where quantization is a manual,
+# visible step rather than a pre-picked model tag (see
+# scripts/quantize_gguf.sh).
+#
+#   ./scripts/quantize_gguf.sh models/mistral-7b-instruct.f16.gguf models/mistral-7b-instruct.Q4_K_M.gguf Q4_K_M
+#   docker compose -f docker-compose.yml -f docker-compose.llamacpp.yml \
+#     up -d --build --scale ollama=0
+#
+# --jinja is required for tool-call template rendering (without it,
+# llama-server never emits `tool_calls`, only plain text). The GGUF file
+# itself also needs a tool-use-capable chat template baked in; current
+# Qwen2.5-Instruct / Hermes GGUF builds have this; a plain base-model GGUF
+# will not. LLAMACPP_MODEL_FILE is quantized locally via
+# scripts/quantize_gguf.sh, not pulled pre-quantized like the Ollama path.
+services:
+  llamacpp:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    command:
+      - "-m"
+      - "/models/${LLAMACPP_MODEL_FILE:-qwen2.5-7b-instruct.Q4_K_M.gguf}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "-c"
+      - "4096"
+      - "--jinja"
+      - "--n-gpu-layers"
+      - "${LLAMACPP_GPU_LAYERS:-0}"  # 0 = CPU only; raise on a GPU box
+    volumes:
+      - ./models:/models:ro
+    ports:
+      - "8082:8080"  # not 8080:8080, which collides with Traefik's dashboard port in docker-compose.yml
+    deploy:
+      resources:
+        limits: { cpus: "4.0", memory: 8G }
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/8080' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  gateway-api:
+    environment:
+      GATEWAY_LLM_BACKEND: llamacpp
+      GATEWAY_LLM_BASE_URL: http://llamacpp:8080/v1
+      GATEWAY_LLM_MODEL: ${LLAMACPP_MODEL_FILE:-qwen2.5-7b-instruct.Q4_K_M.gguf}
+    depends_on:
+      llamacpp:
+        condition: service_healthy

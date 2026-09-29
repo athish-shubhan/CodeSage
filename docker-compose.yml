@@ -1,0 +1,142 @@
+services:
+  traefik:
+    image: traefik:v3.1
+    command: ["--configFile=/etc/traefik/traefik.yml"]
+    ports:
+      - "80:80"
+      - "8080:8080"  # Traefik dashboard
+    volumes:
+      - ./gateway/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./gateway/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+    depends_on:
+      gateway-api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256M }
+
+  gateway-api:
+    build: ./services/gateway-api
+    environment:
+      GATEWAY_LLM_BACKEND: ${LLM_BACKEND:-ollama}
+      GATEWAY_LLM_BASE_URL: ${LLM_BASE_URL:-http://ollama:11434/v1}
+      GATEWAY_LLM_MODEL: ${LLM_MODEL:-llama3.1:8b-instruct-q4_0}
+      GATEWAY_RETRIEVAL_GRPC_TARGET: retrieval-service:50051
+      GATEWAY_JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+    ports:
+      - "8000:8000"  # exposed directly too, for local dev without Traefik
+    depends_on:
+      retrieval-service:
+        condition: service_healthy
+      # Deliberately NOT depends_on ollama: the LLM backend is swappable
+      # (see docker-compose.vllm.yml / docker-compose.llamacpp.yml) and
+      # gateway-api treats it as a soft dependency: it starts and serves
+      # /healthz regardless, and /chat calls fail individually until the
+      # backend is ready, rather than blocking the whole stack's boot on it.
+    healthcheck:
+      # Compose only has one healthcheck slot (no separate liveness/readiness
+      # like k8s), so this points at /livez, a process-alive check, not the
+      # dependency-aggregating /healthz, for the same reason described in
+      # docs/architecture.md#liveness-vs-readiness.
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/livez')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+
+  retrieval-service:
+    build: ./services/retrieval-service
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      EMBEDDING_DEVICE: cpu
+    volumes:
+      - ./:/data/codesage-agent:ro  # lets you ingest this repo itself as a demo
+    ports:
+      - "50051:50051"  # gRPC, published for the eval/ CLI tools; not for public exposure
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9101')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 2G }  # embedding model + gRPC workers
+
+  qdrant:
+    image: qdrant/qdrant:v1.11.3
+    volumes:
+      - qdrant-data:/qdrant/storage
+    ports:
+      - "6333:6333"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1G }
+
+  ollama:
+    image: ollama/ollama:0.3.12
+    volumes:
+      - ollama-data:/root/.ollama
+    ports:
+      - "11434:11434"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/11434' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    deploy:
+      resources:
+        # Deliberately conservative: a single container's --cpus limit can't
+        # exceed the CPUs actually visible to the Docker host (e.g. a 2-vCPU
+        # dev VM/laptop allocation rejects anything above 2.0 outright,
+        # rather than just throttling it). Raise this if your host has more
+        # cores to give Ollama; there's no ceiling from the compose side.
+        limits: { cpus: "2.0", memory: 6G }
+        # GPU passthrough: see docker-compose.gpu.yml for an override that adds
+        # `deploy.resources.reservations.devices` for an nvidia runtime.
+
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 512M }
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards/json:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256M }
+
+volumes:
+  qdrant-data:
+  ollama-data:
+  prometheus-data:
+  grafana-data:
