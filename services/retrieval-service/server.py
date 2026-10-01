@@ -34,10 +34,18 @@ SEARCH_LATENCY = Histogram("retrieval_search_latency_seconds", "Search RPC laten
 INGEST_REQUESTS = Counter("retrieval_ingest_requests_total", "Total IngestRepo RPCs")
 CHUNKS_EMBEDDED = Counter("retrieval_ingest_chunks_embedded_total", "Chunks embedded by IngestRepo")
 RERANK_REQUESTS = Counter("retrieval_rerank_requests_total", "Search RPCs that used the reranker")
+SEARCH_CANCELLED = Counter("retrieval_search_cancelled_total", "Searches stopped early because the client went away")
 
 
 class RetrievalServicer(retrieval_pb2_grpc.RetrievalServicer):
     def Search(self, request, context):
+        try:
+            return self._search(request, context)
+        except pipeline.Cancelled:
+            SEARCH_CANCELLED.inc()
+            context.abort(grpc.StatusCode.CANCELLED, "client deadline passed or client disconnected")
+
+    def _search(self, request, context):
         SEARCH_REQUESTS.inc()
         if request.use_reranker:
             RERANK_REQUESTS.inc()
@@ -49,6 +57,8 @@ class RetrievalServicer(retrieval_pb2_grpc.RetrievalServicer):
                 max_tokens=request.max_context_tokens or DEFAULT_MAX_CONTEXT_TOKENS,
                 strategy=request.strategy or "dense",
                 use_reranker=request.use_reranker,
+                min_score=request.min_score,
+                is_active=context.is_active,
             )
 
         chunks = [
@@ -70,6 +80,8 @@ class RetrievalServicer(retrieval_pb2_grpc.RetrievalServicer):
             context_tokens=result["context_tokens"],
             lexical_weight=result["lexical_weight"],
             trace=trace_spans,
+            top_dense_score=result["top_dense_score"],
+            abstained=result["abstained"],
         )
 
     def IngestRepo(self, request, context):

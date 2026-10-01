@@ -35,3 +35,19 @@ def test_rerank_respects_top_k():
 
 def test_rerank_handles_empty_input():
     assert reranker.rerank("query", [], top_k=5) == []
+
+
+def test_rerank_stops_between_batches_once_caller_is_gone():
+    import pytest
+
+    from pipeline import Cancelled
+
+    chunks = [{"source_path": f"{i}.py", "start_line": 1, "end_line": 1, "text": "x"} for i in range(20)]
+    fake_model = MagicMock()
+    fake_model.predict.side_effect = lambda pairs, **kw: [0.5] * len(pairs)
+    checks = iter([True, False])
+
+    with patch("reranker._get_model", return_value=fake_model), pytest.raises(Cancelled):
+        reranker.rerank("query", chunks, top_k=5, is_active=lambda: next(checks))
+
+    assert fake_model.predict.call_count == 1  # one batch of 8, then stopped

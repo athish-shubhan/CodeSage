@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     retrieval_grpc_target: str = "retrieval-service:50051"
     default_collection: str = "codebase"
     top_k: int = 5
+    # Retrieval abstains (returns no chunks) when the best dense similarity is
+    # below this. 0 disables it (the default); pick a value with eval/abstention.py.
+    retrieval_min_score: float = 0.0
 
     # demo credentials for the JWT /token endpoint; swap for a real user
     # store (Postgres, an IdP, etc.) before this ever handles real users.

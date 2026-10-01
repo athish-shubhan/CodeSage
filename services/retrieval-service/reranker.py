@@ -26,14 +26,25 @@ def _get_model():
     return _model
 
 
-def rerank(query: str, chunks: list[dict], top_k: int) -> list[dict]:
+BATCH_SIZE = 8
+
+
+def rerank(query: str, chunks: list[dict], top_k: int, is_active=lambda: True) -> list[dict]:
     """Re-scores `chunks` against `query` with a cross-encoder and returns
-    the top_k, replacing `fusion_score` with the reranker's score."""
+    the top_k, replacing `fusion_score` with the reranker's score. Scores in
+    small batches and checks is_active between them, so an abandoned request
+    stops within one batch instead of finishing the whole candidate pool."""
     if not chunks:
         return []
+    from pipeline import Cancelled
+
     model = _get_model()
     pairs = [(query, c["text"]) for c in chunks]
-    scores = model.predict(pairs)
+    scores = []
+    for i in range(0, len(pairs), BATCH_SIZE):
+        if not is_active():
+            raise Cancelled()
+        scores.extend(model.predict(pairs[i : i + BATCH_SIZE], show_progress_bar=False))
     reranked = [{**c, "fusion_score": float(s)} for c, s in zip(chunks, scores)]
     reranked.sort(key=lambda c: c["fusion_score"], reverse=True)
     return reranked[:top_k]

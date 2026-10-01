@@ -52,6 +52,10 @@ services:
     environment:
       QDRANT_URL: http://qdrant:6333
       EMBEDDING_DEVICE: cpu
+      # torch sizes its thread pool from the host's visible cores, not the
+      # container's CPU limit below; match it to the limit so concurrent
+      # requests don't oversubscribe a 2-CPU quota (see docs/evaluation.md).
+      OMP_NUM_THREADS: "2"
     volumes:
       - ./:/data/codesage-agent:ro  # lets you ingest this repo itself as a demo
     ports:

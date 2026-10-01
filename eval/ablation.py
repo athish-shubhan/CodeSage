@@ -30,13 +30,14 @@ def render_report(rows: list[dict], n: int, corpus_note: str) -> str:
         f"({corpus_note}). Small-N by design: this is a demo-scale benchmark, "
         "not a claim of statistical significance. The harness itself is corpus-agnostic.",
         "",
-        "| Strategy | Recall@K | MRR | Avg latency (ms) | Avg context tokens |",
-        "|---|---|---|---|---|",
+        "| Strategy | Recall@K | Recall 95% CI | MRR | p50 latency (ms) | p95 latency (ms) | Avg context tokens |",
+        "|---|---|---|---|---|---|---|",
     ]
     for row in rows:
+        lo, hi = row["recall_ci95"]
         lines.append(
-            f"| {row['label']} | {row['recall_at_k']:.2f} | {row['mrr']:.2f} | "
-            f"{row['avg_latency_ms']:.0f} | {row['avg_context_tokens']:.0f} |"
+            f"| {row['label']} | {row['recall_at_k']:.2f} | {lo:.2f}-{hi:.2f} | {row['mrr']:.2f} | "
+            f"{row['p50_latency_ms']:.0f} | {row['p95_latency_ms']:.0f} | {row['avg_context_tokens']:.0f} |"
         )
     lines.append("")
 
@@ -53,7 +54,7 @@ def render_report(rows: list[dict], n: int, corpus_note: str) -> str:
         lines.append(
             f"**Finding:** {best['label']} improved Recall@K by {delta:+.2f} over dense-only "
             f"({baseline['recall_at_k']:.2f} -> {best['recall_at_k']:.2f}), at "
-            f"{best['avg_latency_ms'] - baseline['avg_latency_ms']:+.0f}ms extra average latency."
+            f"{best['p50_latency_ms'] - baseline['p50_latency_ms']:+.0f}ms extra p50 latency."
         )
     return "\n".join(lines)
 
@@ -63,6 +64,8 @@ def main() -> None:
     parser.add_argument("--target", default="localhost:50051")
     parser.add_argument("--collection", default="codebase")
     parser.add_argument("--top-k", type=int, default=5)
+    parser.add_argument("--note", default="", help="extra corpus/model description for the report header")
+    parser.add_argument("--report", type=Path, default=REPORT_PATH)
     args = parser.parse_args()
 
     rows = []
@@ -73,9 +76,9 @@ def main() -> None:
         rows.append({**summary, "label": label})
         print(f"{label}: recall@{args.top_k}={summary['recall_at_k']:.2f} mrr={summary['mrr']:.2f}")
 
-    report = render_report(rows, n, f"collection={args.collection}")
-    REPORT_PATH.write_text(report)
-    print(f"\nWrote {REPORT_PATH}")
+    note = f"collection={args.collection}" + (f", {args.note}" if args.note else "")
+    args.report.write_text(render_report(rows, n, note) + "\n")
+    print(f"\nWrote {args.report}")
 
 
 if __name__ == "__main__":

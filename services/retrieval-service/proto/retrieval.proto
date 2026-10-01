@@ -21,6 +21,7 @@ message SearchRequest {
   bool use_reranker = 4;        // off by default -- see reranker.py
   int32 max_context_tokens = 5; // 0 = server default
   string strategy = 6;          // "" or "dense" (default), "hybrid", "lexical"
+  float min_score = 7;          // abstain (return no chunks) if the best dense similarity is below this; 0 = off
 }
 
 message Chunk {
@@ -42,6 +43,8 @@ message SearchResponse {
   int32 context_tokens = 2;
   double lexical_weight = 3;
   repeated TraceSpan trace = 4;
+  float top_dense_score = 5;    // cosine similarity of the best dense hit, 0 if dense search didn't run
+  bool abstained = 6;           // true if min_score suppressed the results
 }
 
 message IngestRequest {

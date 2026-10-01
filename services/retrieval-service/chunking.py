@@ -13,6 +13,12 @@ TEXT_EXTENSIONS = {
 }
 
 
+SKIP_DIRS = {
+    ".git", "node_modules", "__pycache__", ".venv", "venv",
+    ".pytest_cache", ".mypy_cache", ".ruff_cache",
+}
+
+
 @dataclass
 class RawChunk:
     text: str
@@ -23,7 +29,7 @@ class RawChunk:
 
 def iter_source_files(repo_path: str, include_globs: list[str] | None = None):
     for root, dirs, files in os.walk(repo_path):
-        dirs[:] = [d for d in dirs if d not in (".git", "node_modules", "__pycache__", ".venv", "venv")]
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
         for fname in files:
             ext = os.path.splitext(fname)[1]
             if ext not in TEXT_EXTENSIONS:
@@ -59,11 +65,24 @@ def window_chunks(lines: list[str], rel_path: str, base_line: int = 1) -> list[R
     return chunks
 
 
+GENERATED_MARKERS = ("DO NOT EDIT", "@generated")
+
+
+def is_generated(source: str) -> bool:
+    """Generated code (protobuf stubs, lockfiles, codegen output) conventionally
+    says so in its first lines. Indexing it adds near-duplicate noise that
+    outranks the hand-written source it was generated from."""
+    head = source[:500]
+    return any(marker in head for marker in GENERATED_MARKERS)
+
+
 def chunk_file(full_path: str, rel_path: str) -> list[RawChunk]:
     try:
         with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
             source = f.read()
     except OSError:
+        return []
+    if is_generated(source):
         return []
 
     if rel_path.endswith(".py"):

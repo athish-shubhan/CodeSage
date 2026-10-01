@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
+import statistics
 import sys
 import time
 from pathlib import Path
@@ -32,20 +34,35 @@ def load_qa_pairs(path: Path = DEFAULT_QA_PATH) -> list[dict]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
-def search(stub, query: str, top_k: int, collection: str, strategy: str, use_reranker: bool) -> dict:
+def search(
+    stub,
+    query: str,
+    top_k: int,
+    collection: str,
+    strategy: str,
+    use_reranker: bool,
+    min_score: float = 0.0,
+    timeout: float | None = None,
+) -> dict:
     req = retrieval_pb2.SearchRequest(
-        query=query, top_k=top_k, collection=collection, strategy=strategy, use_reranker=use_reranker
+        query=query,
+        top_k=top_k,
+        collection=collection,
+        strategy=strategy,
+        use_reranker=use_reranker,
+        min_score=min_score,
     )
     # Reranking costs a cross-encoder forward pass per candidate; on CPU
     # that is meaningfully slower than plain fusion, so it gets a longer
     # deadline rather than failing under load.
     start = time.perf_counter()
-    resp = stub.Search(req, timeout=60 if use_reranker else 30)
+    resp = stub.Search(req, timeout=timeout or (60 if use_reranker else 30))
     latency_ms = (time.perf_counter() - start) * 1000
     return {
         "paths": [c.source_path for c in resp.chunks],
         "latency_ms": latency_ms,
         "context_tokens": resp.context_tokens,
+        "top_dense_score": resp.top_dense_score,
     }
 
 
@@ -70,16 +87,42 @@ def unanswerable_is_clean(retrieved: list[str]) -> bool:
     return len(retrieved) == 0
 
 
+def bootstrap_ci(values: list[float], iterations: int = 2000, seed: int = 0) -> tuple[float, float]:
+    """95% percentile-bootstrap interval for the mean. Seeded so a report is
+    reproducible. With ~20 questions this interval is wide, and showing it is
+    the point: a 0.05 difference between two strategies is inside the noise."""
+    if not values:
+        return (0.0, 0.0)
+    rng = random.Random(seed)
+    means = sorted(statistics.fmean(rng.choices(values, k=len(values))) for _ in range(iterations))
+    return (means[int(0.025 * iterations)], means[int(0.975 * iterations) - 1])
+
+
+def percentile(values: list[float], p: float) -> float:
+    ordered = sorted(values)
+    return ordered[min(len(ordered) - 1, int(round(p / 100 * (len(ordered) - 1))))]
+
+
 def run(
-    target: str, collection: str, top_k: int, strategy: str, use_reranker: bool, qa_path: Path = DEFAULT_QA_PATH
+    target: str,
+    collection: str,
+    top_k: int,
+    strategy: str,
+    use_reranker: bool,
+    qa_path: Path = DEFAULT_QA_PATH,
+    min_score: float = 0.0,
 ) -> dict:
     channel = grpc.insecure_channel(target)
     stub = retrieval_pb2_grpc.RetrievalStub(channel)
     qa_pairs = load_qa_pairs(qa_path)
 
+    # Untimed warm-up: the first query of a config may load (or download) the
+    # embedding or reranker model, which is a cold-start cost, not per-query latency.
+    search(stub, qa_pairs[0]["question"], top_k, collection, strategy, use_reranker, min_score, timeout=900)
+
     per_question = []
     for qa in qa_pairs:
-        result = search(stub, qa["question"], top_k, collection, strategy, use_reranker)
+        result = search(stub, qa["question"], top_k, collection, strategy, use_reranker, min_score)
         per_question.append(
             {
                 "id": qa["id"],
@@ -87,6 +130,7 @@ def run(
                 "retrieved": result["paths"],
                 "latency_ms": result["latency_ms"],
                 "context_tokens": result["context_tokens"],
+                "top_dense_score": result["top_dense_score"],
                 "recall": recall_at_k(result["paths"], qa["expected_paths"]),
                 "rr": reciprocal_rank(result["paths"], qa["expected_paths"]),
             }
@@ -95,14 +139,19 @@ def run(
     scored = [r for r in per_question if r["recall"] is not None]
     unanswerable = [r for r in per_question if r["category"] == "unanswerable"]
 
+    latencies = [r["latency_ms"] for r in per_question]
     return {
         "strategy": strategy,
         "use_reranker": use_reranker,
+        "min_score": min_score,
         "n": len(qa_pairs),
         "n_scored": len(scored),
         "recall_at_k": sum(r["recall"] for r in scored) / len(scored) if scored else 0.0,
+        "recall_ci95": bootstrap_ci([r["recall"] for r in scored]),
         "mrr": sum(r["rr"] for r in scored) / len(scored) if scored else 0.0,
-        "avg_latency_ms": sum(r["latency_ms"] for r in per_question) / len(per_question),
+        "avg_latency_ms": statistics.fmean(latencies),
+        "p50_latency_ms": percentile(latencies, 50),
+        "p95_latency_ms": percentile(latencies, 95),
         "avg_context_tokens": sum(r["context_tokens"] for r in per_question) / len(per_question),
         "unanswerable_clean_rate": (
             sum(unanswerable_is_clean(r["retrieved"]) for r in unanswerable) / len(unanswerable)
@@ -122,9 +171,12 @@ if __name__ == "__main__":
     parser.add_argument("--rerank", action="store_true")
     parser.add_argument("--qa-pairs", type=Path, default=DEFAULT_QA_PATH)
     parser.add_argument("--min-recall", type=float, default=None, help="exit 1 if recall_at_k is below this")
+    parser.add_argument("--min-score", type=float, default=0.0, help="abstention threshold, see abstention.py")
     args = parser.parse_args()
 
-    summary = run(args.target, args.collection, args.top_k, args.strategy, args.rerank, args.qa_pairs)
+    summary = run(
+        args.target, args.collection, args.top_k, args.strategy, args.rerank, args.qa_pairs, args.min_score
+    )
     print(json.dumps({k: v for k, v in summary.items() if k != "per_question"}, indent=2))
 
     if args.min_recall is not None and summary["recall_at_k"] < args.min_recall:
