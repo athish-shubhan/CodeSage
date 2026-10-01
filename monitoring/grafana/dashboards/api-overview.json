@@ -9,7 +9,12 @@
       "id": 1,
       "title": "Gateway request rate (req/s)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
       "targets": [
         {
           "expr": "sum(rate(http_requests_total{job=\"gateway-api\"}[1m])) by (handler)",
@@ -21,7 +26,12 @@
       "id": 2,
       "title": "Gateway p95 latency (s)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
       "targets": [
         {
           "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"gateway-api\"}[5m])) by (le, handler))",
@@ -33,7 +43,12 @@
       "id": 3,
       "title": "Retrieval search rate (req/s)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
       "targets": [
         {
           "expr": "rate(retrieval_search_requests_total[1m])",
@@ -45,11 +60,75 @@
       "id": 4,
       "title": "Retrieval search p95 latency (s)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
       "targets": [
         {
           "expr": "histogram_quantile(0.95, sum(rate(retrieval_search_latency_seconds_bucket[5m])) by (le))",
           "legendFormat": "p95"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Agent runs by stop reason (per 5m)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(agent_stopped_reason_total[5m])) by (reason)",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Ungrounded agent citations (fraction)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 16
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(agent_citations_total{grounded=\"false\"}[15m])) / sum(rate(agent_citations_total[15m]))",
+          "legendFormat": "ungrounded",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Chunks embedded by ingest (per 1h)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 16
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(retrieval_ingest_chunks_embedded_total[1h]))",
+          "legendFormat": "chunks embedded",
+          "refId": "A"
         }
       ]
     }

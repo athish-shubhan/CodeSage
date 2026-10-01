@@ -14,11 +14,17 @@ class AgentRequest(BaseModel):
     task: str
 
 
+class Citations(BaseModel):
+    grounded: list[str]  # "path:start-end" backed by a tool result in this run
+    ungrounded: list[str]  # cited by the model, never shown to it by a tool
+
+
 class AgentResponse(BaseModel):
     answer: str
     steps: int
     stopped_reason: str
     tool_calls: list[dict]
+    citations: Citations
 
 
 @router.post("", response_model=AgentResponse)
@@ -38,4 +44,5 @@ async def agent(req: AgentRequest, user: str = Depends(current_user)) -> AgentRe
         steps=state.steps,
         stopped_reason=state.stopped_reason or "unknown",
         tool_calls=[asdict(tc) for tc in state.tool_calls],
+        citations=Citations(**state.citations),
     )

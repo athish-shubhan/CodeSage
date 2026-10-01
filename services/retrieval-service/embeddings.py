@@ -7,17 +7,19 @@ from __future__ import annotations
 
 import os
 
-from sentence_transformers import SentenceTransformer
-
 _MODEL_NAME = os.environ.get("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 _DEVICE = os.environ.get("EMBEDDING_DEVICE", "cpu")  # set to "cuda" on a GPU edge node
 
-_model: SentenceTransformer | None = None
+_model = None
 
 
-def get_model() -> SentenceTransformer:
+def get_model():
     global _model
     if _model is None:
+        # Imported lazily so modules that only route to this one (pipeline,
+        # server) import and test without torch installed.
+        from sentence_transformers import SentenceTransformer
+
         _model = SentenceTransformer(_MODEL_NAME, device=_DEVICE)
     return _model
 

@@ -19,5 +19,8 @@ class IngestRequest(BaseModel):
 
 
 class IngestResponse(BaseModel):
-    files_indexed: int
-    chunks_indexed: int
+    files_indexed: int  # files scanned
+    chunks_indexed: int  # chunks in the collection after this ingest
+    files_changed: int  # new or modified since the last ingest, re-embedded
+    files_removed: int  # deleted from the repo, their chunks dropped
+    chunks_embedded: int  # embedding work this call actually did

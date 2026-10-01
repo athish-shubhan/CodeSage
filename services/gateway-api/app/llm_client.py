@@ -39,6 +39,12 @@ def build_prompt(question: str, context_chunks: list[dict]) -> str:
     return f"# Retrieved context\n{context}\n\n# Question\n{question}"
 
 
+# No overall timeout on streaming (a long answer legitimately takes a while),
+# but a read timeout between chunks, so a hung backend fails the request
+# instead of holding it open forever.
+STREAM_TIMEOUT = httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0)
+
+
 def _headers() -> dict:
     return {"Authorization": f"Bearer {settings.llm_api_key}"}
 
@@ -53,7 +59,7 @@ async def stream_chat(user_prompt: str) -> AsyncIterator[str]:
         ],
     }
     url = f"{settings.llm_base_url}/chat/completions"
-    async with httpx.AsyncClient(timeout=None) as client:
+    async with httpx.AsyncClient(timeout=STREAM_TIMEOUT) as client:
         async with client.stream("POST", url, json=payload, headers=_headers()) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():

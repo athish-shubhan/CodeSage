@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import Depends, FastAPI
 from fastapi.security import OAuth2PasswordRequestForm
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -7,7 +9,13 @@ from app.auth import login_for_token
 from app.config import settings
 from app.routers import agent, chat, ingest, ws
 
-app = FastAPI(title="CodeSage Gateway API", version="0.1.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    await rag_client.close()
+
+
+app = FastAPI(title="CodeSage Gateway API", version="0.1.0", lifespan=lifespan)
 
 app.include_router(chat.router)
 app.include_router(ingest.router)

@@ -31,6 +31,27 @@ jobs:
       - name: Run tests
         run: cd services/${{ matrix.service }} && python -m pytest tests/ -q
 
+  integration:
+    # Gateway and retrieval-service over real gRPC (embedded Qdrant, stand-in
+    # embedder, scripted LLM). No torch needed: the embedding model is only
+    # imported when a real embedding is requested.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          pip install -r services/gateway-api/requirements.txt qdrant-client==1.11.3 bm25s==0.3.11 pytest pytest-asyncio
+      - name: Generate gRPC stubs
+        run: |
+          for d in services/retrieval-service services/gateway-api; do
+            python -m grpc_tools.protoc -I $d/proto --python_out=$d --grpc_python_out=$d $d/proto/retrieval.proto
+          done
+      - name: Run integration tests
+        run: python -m pytest tests/integration -q
+
   eval-tests:
     runs-on: ubuntu-latest
     steps:
@@ -178,6 +199,14 @@ jobs:
 
       - name: Build retrieval-service image
         run: docker build -t codesage/retrieval-service:ci services/retrieval-service
+
+  proto-sync:
+    # Each service keeps its own copy of the proto so its Docker build
+    # context is self-contained; this keeps the two copies from drifting.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: diff services/retrieval-service/proto/retrieval.proto services/gateway-api/proto/retrieval.proto
 
   compose-config:
     runs-on: ubuntu-latest
