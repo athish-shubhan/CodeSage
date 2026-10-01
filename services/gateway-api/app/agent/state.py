@@ -24,3 +24,4 @@ class AgentState:
     done: bool = False
     answer: str | None = None
     stopped_reason: str | None = None  # "done" | "max_steps" | "timeout"
+    citations: dict = field(default_factory=dict)  # {"grounded": [...], "ungrounded": [...]}, see citations.py

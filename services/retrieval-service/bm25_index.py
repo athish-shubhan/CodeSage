@@ -6,7 +6,8 @@ into the same semantic neighbourhood as any other config-sounding text. BM25
 matches the literal tokens, which is exactly what an exact-identifier query
 needs. Kept in-process (no new service/infra): the corpus is small enough
 that an in-memory numpy index rebuilt on each ingest is simpler and faster
-than standing up a real search engine.
+than standing up a real search engine. Not durable on its own: after a
+restart pipeline.restore() rebuilds it from the chunk payloads in Qdrant.
 """
 from __future__ import annotations
 
@@ -24,6 +25,10 @@ def build_index(collection: str, chunks: list[dict]) -> None:
     retriever = bm25s.BM25()
     retriever.index(tokens, show_progress=False)
     _indexes[collection] = (retriever, chunks)
+
+
+def has_index(collection: str) -> bool:
+    return collection in _indexes
 
 
 def search(collection: str, query: str, top_k: int) -> list[dict]:

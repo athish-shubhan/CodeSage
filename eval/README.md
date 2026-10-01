@@ -22,7 +22,7 @@ python -m grpc_tools.protoc -I services/retrieval-service/proto \
     services/retrieval-service/proto/retrieval.proto
 
 cd eval
-python run_eval.py --strategy hybrid
+python run_eval.py --strategy dense
 python ablation.py          # writes report.md
 ```
 

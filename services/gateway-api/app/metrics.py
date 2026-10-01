@@ -7,3 +7,6 @@ from prometheus_client import Counter, Histogram
 AGENT_STEPS = Histogram("agent_steps_total", "Number of LLM round-trips per agent run", buckets=(1, 2, 3, 4, 5))
 AGENT_TOOL_CALLS = Counter("agent_tool_calls_total", "Total tool invocations across all agent runs", ["tool"])
 AGENT_STOP_REASON = Counter("agent_stopped_reason_total", "Why an agent run ended", ["reason"])
+AGENT_CITATIONS = Counter(
+    "agent_citations_total", "Citations in final agent answers, by whether a tool result backs them", ["grounded"]
+)

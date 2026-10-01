@@ -3,8 +3,9 @@ syntax = "proto3";
 package retrieval;
 
 // Retrieval service: embeds a source repo into a vector store and serves
-// hybrid (dense + lexical) chunk lookups, with context assembly and
-// optional reranking, for the gateway-api's RAG/agent pipeline.
+// chunk lookups (dense by default, optionally fused with BM25 and
+// reranked), with token-budgeted context assembly, for the gateway-api's
+// RAG/agent pipeline.
 service Retrieval {
   rpc Search (SearchRequest) returns (SearchResponse);
   rpc IngestRepo (IngestRequest) returns (IngestResponse);
@@ -19,7 +20,7 @@ message SearchRequest {
   string collection = 3;
   bool use_reranker = 4;        // off by default -- see reranker.py
   int32 max_context_tokens = 5; // 0 = server default
-  string strategy = 6;          // "" or "hybrid" (default), "dense", "lexical" -- for ablation
+  string strategy = 6;          // "" or "dense" (default), "hybrid", "lexical"
 }
 
 message Chunk {
@@ -50,8 +51,11 @@ message IngestRequest {
 }
 
 message IngestResponse {
-  int32 files_indexed = 1;
-  int32 chunks_indexed = 2;
+  int32 files_indexed = 1;    // files scanned
+  int32 chunks_indexed = 2;   // chunks in the collection after this ingest
+  int32 files_changed = 3;    // new or modified since the last ingest (re-embedded)
+  int32 files_removed = 4;    // gone from the repo, their chunks deleted
+  int32 chunks_embedded = 5;  // embedding work actually done by this call
 }
 
 message ExpandContextRequest {

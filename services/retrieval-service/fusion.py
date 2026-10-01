@@ -51,14 +51,17 @@ def _approx_tokens(text: str) -> int:
     return max(1, len(text) // 4)  # ~4 chars/token; good enough for budgeting
 
 
-def assemble_context(chunks: list[dict], max_tokens: int) -> tuple[list[dict], int]:
+def assemble_context(chunks: list[dict], max_tokens: int, max_chunks: int | None = None) -> tuple[list[dict], int]:
     """Takes fused, deduped, best-first chunks and returns (selected,
-    total_tokens) without exceeding max_tokens. A chunk is included whole
-    or not at all, never truncated mid-chunk, since half a function is
-    worse than no function."""
+    total_tokens) without exceeding max_tokens or max_chunks. A chunk is
+    included whole or not at all, never truncated mid-chunk, since half a
+    function is worse than no function. total_tokens counts only what was
+    selected."""
     selected: list[dict] = []
     total = 0
     for c in chunks:
+        if max_chunks is not None and len(selected) >= max_chunks:
+            break
         t = _approx_tokens(c["text"])
         if total + t > max_tokens and selected:
             break

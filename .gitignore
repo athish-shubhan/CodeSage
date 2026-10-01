@@ -7,3 +7,4 @@ venv/
 *_pb2_grpc.py
 .DS_Store
 models/*.gguf
+.pytest_cache/

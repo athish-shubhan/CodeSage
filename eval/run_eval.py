@@ -9,7 +9,7 @@ Usage:
     python -m grpc_tools.protoc -I ../services/retrieval-service/proto \\
         --python_out=. --grpc_python_out=. \\
         ../services/retrieval-service/proto/retrieval.proto
-    python run_eval.py --strategy hybrid
+    python run_eval.py --strategy dense
 """
 from __future__ import annotations
 
@@ -118,7 +118,7 @@ if __name__ == "__main__":
     parser.add_argument("--target", default="localhost:50051")
     parser.add_argument("--collection", default="codebase")
     parser.add_argument("--top-k", type=int, default=5)
-    parser.add_argument("--strategy", default="hybrid", choices=["hybrid", "dense", "lexical"])
+    parser.add_argument("--strategy", default="dense", choices=["hybrid", "dense", "lexical"])
     parser.add_argument("--rerank", action="store_true")
     parser.add_argument("--qa-pairs", type=Path, default=DEFAULT_QA_PATH)
     parser.add_argument("--min-recall", type=float, default=None, help="exit 1 if recall_at_k is below this")

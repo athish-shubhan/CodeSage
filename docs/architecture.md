@@ -51,19 +51,25 @@ Everything also runs as a single `docker-compose up` on one machine for local de
 
 ## Context layer: retrieval, ranking, evaluation
 
-`retrieval-service`'s `Search` RPC runs a pipeline, not a single vector lookup. Everything below lives in `services/retrieval-service/`.
+`retrieval-service`'s `Search` RPC runs a pipeline, not a single vector lookup. The pipeline itself is `pipeline.py` (`search` and `ingest`), independent of gRPC; `server.py` only converts protos and records metrics, which is what lets the pipeline be tested against an embedded Qdrant with no server. Everything below lives in `services/retrieval-service/`.
 
 1. `query_classifier.py`: a handful of regexes decide, without an LLM call, how much a query looks like it wants an exact identifier match (snake_case, camelCase, CONSTANT_CASE, dotted paths, quoted strings) versus a semantic match. Used when hybrid mode is requested; see the note on the default strategy below.
 2. Dense search (`vector_store.py`, Qdrant) is the default. Lexical search (`bm25_index.py`, bm25s) also runs when `strategy="hybrid"` is requested, and the two are combined in `fusion.py` via weighted reciprocal rank fusion using the classifier's output as the weight.
 3. `fusion.py` also dedupes chunks whose line ranges overlap on the same file, and assembles a token-budgeted context that never truncates a single chunk, regardless of which strategy produced the candidates.
 4. `reranker.py`: an optional cross-encoder pass, off by default. `eval/ablation.py` measured it improving Recall@5 by 0.10 on this corpus at roughly 25x the latency; see `docs/evaluation.md` for the numbers and when that trade is worth making.
 
-**Default strategy is dense-only, not hybrid.** `eval/ablation.py` measured hybrid fusion tying dense-only on Recall@5 and losing on MRR on this corpus (see `docs/evaluation.md`), so `server.py` and `rag_client.py` both default `strategy` to `"dense"`. Hybrid and lexical-only stay available via the `strategy` field on `SearchRequest` for corpora where they measure better; this default is a data-driven choice, not an assumption, and should be re-checked if the corpus changes significantly.
+**Default strategy is dense-only, not hybrid.** `eval/ablation.py` measured hybrid fusion tying dense-only on Recall@5 and losing on MRR on this corpus (see `docs/evaluation.md` and `docs/adr/0002-dense-retrieval-by-default.md`), so `pipeline.py` and `rag_client.py` both default `strategy` to `"dense"`. Hybrid and lexical-only stay available via the `strategy` field on `SearchRequest` for corpora where they measure better; this default is a data-driven choice, not an assumption, and should be re-checked if the corpus changes significantly.
 5. `context_expand.py`: given a retrieved chunk, fetch more surrounding lines from the same file. A chunk already carries its file and line range, which is enough to recover more context without tracking a repo/module/class hierarchy separately.
 6. `chunking_python.py`: Python files are chunked on `def`/`class` boundaries using the stdlib `ast` module rather than fixed-size line windows, so a chunk is usually a whole function. Falls back to a line-window chunker (`chunking.py`) for non-Python files, syntax errors, or any single unit too large to embed whole.
 7. `tracing.py`: every stage records a timed span. `Search` returns the full trace, so a bad answer's cause (wrong classification, dense search missed it, fusion ranked it too low) can be inspected rather than guessed.
 
 `eval/` measures whether each of these choices actually helps on this corpus and by how much. See `docs/evaluation.md`.
+
+### Ingestion
+
+`IngestRepo` is idempotent and incremental (`pipeline.ingest`, `docs/adr/0004-idempotent-incremental-ingestion.md`). Each chunk's Qdrant payload records the SHA-256 of its file, and point IDs are derived from (collection, path, line range, file hash). A re-ingest skips files whose hash is unchanged, deletes and re-embeds changed files, and deletes chunks of files that no longer exist. On this repo (105 files, 353 chunks, `scripts/bench_ingest.py`) an unchanged re-ingest embeds 0 chunks, and editing one file re-embeds only that file's chunks (3 for README.md). Before this, every ingest re-embedded everything under fresh random IDs, so a second ingest doubled the collection.
+
+Qdrant is the only durable store. The BM25 index and the repo root used by `expand_context`/`get_file` are rebuilt from Qdrant payloads on first use after a restart (`pipeline.restore`). Before this, a restarted retrieval-service, or the second of the two k8s replicas, had no lexical index and could not read files until someone re-ingested.
 
 ## Agent layer: bounded tool-calling loop
 
@@ -71,7 +77,9 @@ Everything also runs as a single `docker-compose up` on one machine for local de
 
 - State (`app/agent/state.py`): `AgentState` holds only this task's progress, the messages sent to the LLM, tool calls made, step count, final answer. It is separate from conversation history (owned per session by the caller) and from retrieved context (ephemeral, lives only inside a tool result).
 - Tools (`app/agent/tools.py`): `search_code` (wraps the context-layer pipeline above), `expand_context`, `get_file`. Each has a Pydantic argument schema validated before the call reaches gRPC. A failed tool call returns text to the model ("Tool X failed: ...") instead of crashing the request.
-- Bounds: `MAX_STEPS=4`, `MAX_TOOL_CALLS=6`, `TIMEOUT_S=60`. Hitting any bound ends the loop with an explicit "I couldn't gather enough information" answer, not a silent truncation or an infinite loop.
+- Bounds: `MAX_STEPS=4`, `MAX_TOOL_CALLS=6`, `TIMEOUT_S=60`. The timeout is an `asyncio.timeout` around the whole run, so it also cancels an LLM or tool call that is still in flight; an earlier version only checked the clock between steps, which let a hung backend hold a request for minutes. Hitting any bound ends the loop with an explicit "I couldn't gather enough information" answer, not a silent truncation or an infinite loop.
+- Tool execution: the tool calls a model emits in one step run concurrently (`asyncio.gather`), since they are independent read-only lookups. Every `tool_call` id gets a `tool` message back, including calls dropped because the tool budget ran out. OpenAI-compatible servers reject a transcript with an unanswered tool call.
+- Citation grounding (`app/agent/citations.py`): every `[path:start-end]` citation in the final answer is checked against what the tools actually returned in that run (an overlapping `search_code` hit, an `expand_context` window, or a `get_file` read). The response carries `citations.grounded` and `citations.ungrounded`, and `agent_citations_total{grounded}` counts both, so a model that cites code it was never shown is visible per response and in aggregate. It is a regex and interval check, not an LLM judge.
 - Model routing (`app/agent/model_router.py`): an optional fast/capable model split behind one heuristic function based on question length and whether it looks like a multi-part question. With no fast model configured, the default, every task uses `GATEWAY_LLM_MODEL`.
 - Tool-calling protocol: `app/llm_client.py`'s `complete_with_tools` sends OpenAI-style `tools=[...]` and parses `tool_calls` out of the response. It is the same client `/chat` uses, extended rather than duplicated.
 
@@ -111,13 +119,17 @@ JWT, issued by `POST /token` against demo credentials. Swap for a real user stor
 
 ## Observability
 
-`gateway-api` exposes Prometheus metrics via `prometheus-fastapi-instrumentator` (`/metrics`), plus agent-specific metrics in `app/metrics.py`: `agent_steps_total` (a histogram of round-trips per run), `agent_tool_calls_total` (labeled by tool), `agent_stopped_reason_total` (labeled done, max_steps, or timeout). `retrieval-service` exposes its own counters and histograms (search, ingest, and rerank requests, search latency) on a separate metrics port. Both are scraped by Prometheus and shown in a provisioned Grafana dashboard (`monitoring/grafana/dashboards/api-overview.json`). `/healthz` aggregates liveness of the LLM backend and retrieval-service for use as a readiness probe.
+`gateway-api` exposes Prometheus metrics via `prometheus-fastapi-instrumentator` (`/metrics`), plus agent-specific metrics in `app/metrics.py`: `agent_steps_total` (a histogram of round-trips per run), `agent_tool_calls_total` (labeled by tool), `agent_stopped_reason_total` (labeled done, max_steps, or timeout), `agent_citations_total` (labeled by whether a tool result backs the citation). `retrieval-service` exposes its own counters and histograms (search, ingest, and rerank requests, search latency, `retrieval_ingest_chunks_embedded_total` for how much embedding work ingests actually do) on a separate metrics port. Both are scraped by Prometheus and shown in a provisioned Grafana dashboard (`monitoring/grafana/dashboards/api-overview.json`). `/healthz` aggregates liveness of the LLM backend and retrieval-service for use as a readiness probe.
 
-Tracing is deliberately not OpenTelemetry or Jaeger. This is a single-node system with one consumer of trace data (the debug trace and the eval harness), so a collector, storage backend, and UI would be overhead with no one using it day to day. The in-process `Trace` object in `retrieval-service/tracing.py` answers the same "what happened and how long did it take" question at a fraction of the operational cost. If this ever runs multi-node with several services and people debugging together, that calculation changes.
+Tracing is deliberately not OpenTelemetry or Jaeger yet (`docs/adr/0005-in-process-tracing-not-opentelemetry.md`). There is one consumer of trace data (the debug trace and the eval harness), and the OpenTelemetry GenAI conventions are still marked Development. The in-process `Trace` object in `retrieval-service/tracing.py` answers "what happened and how long did it take" per request; Prometheus answers "how often" in aggregate. If this runs with several teams debugging across services, that calculation changes.
 
-## Known limitation: agent state is single-replica
+The gateway's gRPC client keeps one channel per process with keepalive and retries `UNAVAILABLE` up to 3 attempts with backoff (`app/rag_client.py`, `docs/adr/0001-grpc-between-gateway-and-retrieval.md`). That is only safe because every RPC is idempotent. The LLM client has a 120 s read timeout between streamed chunks; it previously had no timeout at all on the streaming path.
 
-`gateway-api`'s per-session conversation and agent state (`app/agent/state.py`) lives in process, in memory, not in a database or shared cache. That keeps the code simple, but it means `k8s/gateway-api.yaml`'s `replicas: 2` only works correctly for the stateless `/chat`, `/healthz`, and `/livez` paths today. A multi-turn `/agent` session would not survive being routed to a different replica mid-conversation. Fixing this for real multi-replica use would mean a shared session store (Redis, or sticky sessions at the ingress), not implemented here because there is no demo-scale need for it yet, but noted honestly rather than left as a silent gap.
+## Replicas and state
+
+`gateway-api` holds no state across requests. `AgentState` lives for one `/agent` call, and neither `/chat` nor the WebSocket keeps conversation history, so `k8s/gateway-api.yaml`'s `replicas: 2` is safe. The flip side is that there is no multi-turn memory: each question is answered on its own.
+
+`retrieval-service` also runs two replicas. Its durable state is in Qdrant; the in-memory BM25 index is rebuilt from Qdrant on first use (see "Ingestion"). One gap remains: a replica that has already built its BM25 index does not see a later ingest that went through the other replica until it restarts. This only affects the non-default `hybrid` and `lexical` strategies.
 
 ## Other decisions and why
 
@@ -127,7 +139,8 @@ A few components that might be expected here were left out, on purpose:
 - **A separate reranker service.** The reranker is one model, one function, called from one place. A new service boundary needs a real reason, independent scaling, runtime isolation, a separate deployment lifecycle, and none applies yet. It runs in-process in `retrieval-service`, lazy-loaded (`reranker.py`).
 - **A dedicated query-decomposition stage.** Breaking a complex question into sub-questions is exactly what the agent's iterative `search_code` calls already do. A separate decomposition module would duplicate that. This means decomposition only happens in `/agent` mode, not in the single-shot `/chat` path, which is an explicit scope boundary.
 - **PDF or web ingestion.** The corpus this system actually serves is source code and Markdown docs. `chunking.py`'s `TEXT_EXTENSIONS` stays scoped to that; parsers for formats nothing here produces would be unused code.
-- **Shared session state for multi-replica agents.** See "Known limitation" above; not solved because there is no demonstrated need yet, and adding Redis ahead of that need would be infrastructure without a purpose.
+- **Redis or another shared cache.** The gateway is stateless and the retrieval-service rebuilds its in-memory index from Qdrant, so there is no state that needs a second store.
+- **A torch-free embedding runtime (ONNX via fastembed).** Likely a large cut in image size and cold start, and it supports the same MiniLM model and cross-encoder. Not done in this pass because it has to be measured against the current sentence-transformers path (same questions, same corpus) before switching, and there was not enough free disk to hold both runtimes for that comparison.
 
 ## Resource management
 
