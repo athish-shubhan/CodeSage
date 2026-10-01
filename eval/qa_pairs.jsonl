@@ -20,3 +20,9 @@
 {"id": "id-20", "category": "code_specific", "question": "What password hashing library does the demo auth use, and what version conflict had to be pinned around?", "expected_paths": ["services/gateway-api/requirements.txt"]}
 {"id": "id-21", "category": "unanswerable", "question": "What is the monthly price of the CodeSage hosted SaaS plan?", "expected_paths": []}
 {"id": "id-22", "category": "unanswerable", "question": "Which mobile app store is CodeSage published on?", "expected_paths": []}
+{"id": "id-23", "category": "unanswerable", "question": "How does CodeSage synchronize repositories with Salesforce?", "expected_paths": []}
+{"id": "id-24", "category": "unanswerable", "question": "What GraphQL schema does the gateway expose?", "expected_paths": []}
+{"id": "id-25", "category": "unanswerable", "question": "How does a user reset a forgotten password by email?", "expected_paths": []}
+{"id": "id-26", "category": "unanswerable", "question": "Which Kafka topics does ingestion publish events to?", "expected_paths": []}
+{"id": "id-27", "category": "unanswerable", "question": "How is the React frontend dashboard themed for dark mode?", "expected_paths": []}
+{"id": "id-28", "category": "unanswerable", "question": "What is the schema migration strategy for the Postgres user table?", "expected_paths": []}

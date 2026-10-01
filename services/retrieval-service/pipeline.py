@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import bm25_index
@@ -21,6 +22,14 @@ log = logging.getLogger("retrieval-service")
 
 CANDIDATE_K = 20  # each of dense/lexical fetches this many before fusion narrows it down
 RERANK_CANDIDATES = CANDIDATE_K * 2
+
+
+class Cancelled(Exception):
+    """The caller went away (deadline passed or client disconnected)."""
+
+
+def _always_active() -> bool:
+    return True
 
 
 @dataclass
@@ -117,8 +126,23 @@ def search(
     max_tokens: int = 3000,
     strategy: str = "dense",
     use_reranker: bool = False,
+    min_score: float = 0.0,
+    is_active: Callable[[], bool] = _always_active,
 ) -> dict:
-    """Returns {chunks, context_tokens, lexical_weight, trace}.
+    """Returns {chunks, context_tokens, lexical_weight, top_dense_score,
+    abstained, trace}.
+
+    min_score > 0 makes the search abstain, returning no chunks, when the best
+    dense cosine similarity is below it: the question most likely has no
+    answer in this corpus, and "closest available" chunks would only invite
+    the model to answer from unrelated code. See docs/evaluation.md for how
+    the threshold was measured.
+
+    is_active is checked before each expensive stage (embedding, reranking).
+    The gRPC server passes context.is_active, so a request whose client
+    deadline has already passed stops instead of finishing work nobody will
+    read; without this, abandoned reranks kept the CPU busy and made every
+    later request miss its deadline too.
 
     Default strategy is dense-only, not hybrid: eval/ablation.py measured
     hybrid fusion tying dense on Recall@5 and losing on MRR on this corpus
@@ -134,9 +158,22 @@ def search(
     with trace.step("dense_search") as meta:
         dense_hits = []
         if strategy in ("hybrid", "dense"):
+            if not is_active():
+                raise Cancelled()
             [query_vec] = embed([query])
             dense_hits = vector_store.search(collection, query_vec, CANDIDATE_K)
         meta["hits"] = len(dense_hits)
+    top_dense_score = dense_hits[0]["score"] if dense_hits else 0.0
+
+    if min_score > 0 and strategy != "lexical" and top_dense_score < min_score:
+        return {
+            "chunks": [],
+            "context_tokens": 0,
+            "lexical_weight": lex_weight,
+            "top_dense_score": top_dense_score,
+            "abstained": True,
+            "trace": trace.as_dict(),
+        }
 
     with trace.step("lexical_search") as meta:
         lexical_hits = []
@@ -151,7 +188,7 @@ def search(
         with trace.step("rerank") as meta:
             from reranker import rerank
 
-            fused = rerank(query, fused[:RERANK_CANDIDATES], top_k)
+            fused = rerank(query, fused[:RERANK_CANDIDATES], top_k, is_active)
             meta["candidates"] = len(fused)
 
     with trace.step("assemble") as meta:
@@ -159,4 +196,11 @@ def search(
         meta["chunks"] = len(selected)
         meta["tokens"] = tokens_used
 
-    return {"chunks": selected, "context_tokens": tokens_used, "lexical_weight": lex_weight, "trace": trace.as_dict()}
+    return {
+        "chunks": selected,
+        "context_tokens": tokens_used,
+        "lexical_weight": lex_weight,
+        "top_dense_score": top_dense_score,
+        "abstained": False,
+        "trace": trace.as_dict(),
+    }

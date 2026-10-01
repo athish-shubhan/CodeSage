@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
   workflow_dispatch: # lets eval-ablation be triggered manually from the Actions tab
 
@@ -24,6 +24,10 @@ jobs:
           pip install grpcio-tools==1.66.2
           cd services/${{ matrix.service }}
           python -m grpc_tools.protoc -I proto --python_out=. --grpc_python_out=. proto/retrieval.proto
+
+      - name: Install CPU-only torch (retrieval-service)
+        if: matrix.service == 'retrieval-service'
+        run: pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
 
       - name: Install dependencies
         run: pip install -r services/${{ matrix.service }}/requirements.txt pytest pytest-asyncio
@@ -90,7 +94,7 @@ jobs:
 
       - name: Install retrieval-service dependencies (CPU-only torch)
         run: |
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
           pip install -r services/retrieval-service/requirements.txt
 
       - name: Generate gRPC stubs
@@ -146,7 +150,7 @@ jobs:
 
       - name: Install retrieval-service dependencies (CPU-only torch)
         run: |
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
           pip install -r services/retrieval-service/requirements.txt
 
       - name: Generate gRPC stubs

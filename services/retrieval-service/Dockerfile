@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
 
 COPY requirements.txt .
 RUN if [ "$TORCH_VARIANT" = "cpu" ]; then \
-      pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu; \
+      pip install --no-cache-dir torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu; \
     fi
 RUN pip install --no-cache-dir -r requirements.txt
 

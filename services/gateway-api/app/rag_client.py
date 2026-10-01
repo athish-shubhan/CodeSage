@@ -78,6 +78,7 @@ async def search(
         collection=collection or settings.default_collection,
         use_reranker=use_reranker,
         strategy=strategy,
+        min_score=settings.retrieval_min_score,
     )
     response = await _stub().Search(request, timeout=10)
     return [

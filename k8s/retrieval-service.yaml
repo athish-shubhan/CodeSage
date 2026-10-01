@@ -20,6 +20,8 @@ spec:
           env:
             - name: QDRANT_URL
               value: "http://qdrant:6333"
+            - name: OMP_NUM_THREADS  # match the CPU limit; torch otherwise uses every core on the node
+              value: "2"
           resources:
             requests: { cpu: "500m", memory: "1Gi" }
             limits: { cpu: "2", memory: "2Gi" }  # embedding model + gRPC worker pool
