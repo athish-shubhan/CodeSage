@@ -86,9 +86,12 @@ class RetrievalServicer(retrieval_pb2_grpc.RetrievalServicer):
 
     def IngestRepo(self, request, context):
         INGEST_REQUESTS.inc()
-        result = pipeline.ingest(
-            request.collection or DEFAULT_COLLECTION, request.repo_path, list(request.include_globs) or None
-        )
+        try:
+            result = pipeline.ingest(
+                request.collection or DEFAULT_COLLECTION, request.repo_path, list(request.include_globs) or None
+            )
+        except ValueError as e:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
         CHUNKS_EMBEDDED.inc(result.chunks_embedded)
         return retrieval_pb2.IngestResponse(
             files_indexed=result.files_seen,

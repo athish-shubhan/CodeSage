@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -54,7 +55,13 @@ def ingest(collection: str, repo_path: str, include_globs: list[str] | None = No
     since the last ingest are re-chunked and re-embedded; files that
     disappeared from the repo have their chunks deleted. Embedding is the
     expensive step, so an unchanged re-ingest does no embedding at all."""
-    current = {rel: (full, _sha256(full)) for full, rel in iter_source_files(repo_path, include_globs)}
+    # A missing directory would scan as empty and every indexed file would
+    # look deleted, so a mistyped path would wipe the collection. Relative
+    # paths resolve against this process's cwd, not the caller's.
+    if not os.path.isdir(repo_path):
+        raise ValueError(f"repo_path is not a directory on the retrieval-service host: {repo_path!r}")
+    repo_path = os.path.abspath(repo_path)
+    current ={rel: (full, _sha256(full)) for full, rel in iter_source_files(repo_path, include_globs)}
 
     existing = vector_store.all_payloads(collection)
     indexed_hash = {p["source_path"]: p.get("file_hash") for p in existing}

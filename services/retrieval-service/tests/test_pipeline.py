@@ -99,6 +99,14 @@ def test_glob_scoped_ingest_does_not_treat_unscanned_files_as_deleted(repo):
     assert {"auth.py", "math_utils.py", "README.md"} <= {p["source_path"] for p in vector_store.all_payloads(COLLECTION)}
 
 
+def test_ingest_of_missing_path_raises_and_keeps_existing_index(repo, tmp_path):
+    pipeline.ingest(COLLECTION, str(repo))
+    before = len(vector_store.all_payloads(COLLECTION))
+    with pytest.raises(ValueError):
+        pipeline.ingest(COLLECTION, str(tmp_path / "does-not-exist"))
+    assert len(vector_store.all_payloads(COLLECTION)) == before
+
+
 def test_restart_recovers_lexical_index_and_repo_root_from_qdrant(repo):
     pipeline.ingest(COLLECTION, str(repo))
     # Simulate a process restart: in-memory state is lost, Qdrant is not.

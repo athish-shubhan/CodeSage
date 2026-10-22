@@ -13,9 +13,9 @@ jobs:
       matrix:
         service: [gateway-api, retrieval-service]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -41,8 +41,8 @@ jobs:
     # imported when a real embedding is requested.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: Install dependencies
@@ -59,8 +59,8 @@ jobs:
   eval-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: Generate gRPC stubs
@@ -87,8 +87,8 @@ jobs:
         image: qdrant/qdrant:v1.11.3
         ports: ["6333:6333"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -111,10 +111,12 @@ jobs:
         env:
           QDRANT_URL: http://localhost:6333
         run: |
-          python server.py &
+          python server.py > "$RUNNER_TEMP/retrieval-service.log" 2>&1 &
           timeout 60 bash -c 'until curl -sf http://localhost:9101 >/dev/null; do sleep 2; done'
 
       - name: Ingest fixture repo
+        # Absolute path: the server resolves repo_path against its own cwd
+        # (services/retrieval-service), not this step's.
         run: |
           python -c "
           import sys, grpc
@@ -122,8 +124,9 @@ jobs:
           import retrieval_pb2, retrieval_pb2_grpc
           channel = grpc.insecure_channel('localhost:50051')
           stub = retrieval_pb2_grpc.RetrievalStub(channel)
-          resp = stub.IngestRepo(retrieval_pb2.IngestRequest(repo_path='eval/fixture/repo', collection='ci_fixture'), timeout=120)
+          resp = stub.IngestRepo(retrieval_pb2.IngestRequest(repo_path='$GITHUB_WORKSPACE/eval/fixture/repo', collection='ci_fixture'), timeout=120)
           print('ingested', resp.chunks_indexed, 'chunks from', resp.files_indexed, 'files')
+          sys.exit(0 if resp.chunks_indexed else 'ingest indexed no chunks')
           "
 
       - name: Run retrieval-smoke eval (blocking gate)
@@ -131,6 +134,10 @@ jobs:
           pip install httpx
           cd eval
           python run_eval.py --collection ci_fixture --qa-pairs fixture/qa_pairs.jsonl --min-recall 0.8
+
+      - name: Show retrieval-service log
+        if: failure()
+        run: cat "$RUNNER_TEMP/retrieval-service.log"
 
   eval-ablation:
     # The full 22-question hybrid/dense/lexical/rerank comparison against
@@ -143,8 +150,8 @@ jobs:
         image: qdrant/qdrant:v1.11.3
         ports: ["6333:6333"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -167,7 +174,7 @@ jobs:
         env:
           QDRANT_URL: http://localhost:6333
         run: |
-          python server.py &
+          python server.py > "$RUNNER_TEMP/retrieval-service.log" 2>&1 &
           timeout 60 bash -c 'until curl -sf http://localhost:9101 >/dev/null; do sleep 2; done'
 
       - name: Ingest this repo as the eval corpus
@@ -178,8 +185,9 @@ jobs:
           import retrieval_pb2, retrieval_pb2_grpc
           channel = grpc.insecure_channel('localhost:50051')
           stub = retrieval_pb2_grpc.RetrievalStub(channel)
-          resp = stub.IngestRepo(retrieval_pb2.IngestRequest(repo_path='.', collection='codebase'), timeout=300)
+          resp = stub.IngestRepo(retrieval_pb2.IngestRequest(repo_path='$GITHUB_WORKSPACE', collection='codebase'), timeout=300)
           print('ingested', resp.chunks_indexed, 'chunks from', resp.files_indexed, 'files')
+          sys.exit(0 if resp.chunks_indexed else 'ingest indexed no chunks')
           "
 
       - name: Run ablation
@@ -187,7 +195,11 @@ jobs:
           pip install httpx
           cd eval && python ablation.py
 
-      - uses: actions/upload-artifact@v4
+      - name: Show retrieval-service log
+        if: failure()
+        run: cat "$RUNNER_TEMP/retrieval-service.log"
+
+      - uses: actions/upload-artifact@v7
         with:
           name: eval-report
           path: eval/report.md
@@ -196,7 +208,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build gateway-api image
         run: docker build -t codesage/gateway-api:ci services/gateway-api
@@ -209,13 +221,13 @@ jobs:
     # context is self-contained; this keeps the two copies from drifting.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: diff services/retrieval-service/proto/retrieval.proto services/gateway-api/proto/retrieval.proto
 
   compose-config:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Validate compose files
         run: |
           docker compose -f docker-compose.yml config --quiet
@@ -226,7 +238,7 @@ jobs:
   k8s-manifests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Validate manifests parse as YAML
         run: |
           pip install pyyaml
