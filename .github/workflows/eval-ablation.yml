@@ -1,0 +1,80 @@
+name: Eval ablation
+
+# The full 22-question hybrid/dense/lexical/rerank comparison against this
+# repo's own content. Manual-trigger only: slower (real embedding model +
+# full corpus ingest), and not something every PR should block on.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  eval-ablation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      qdrant:
+        image: qdrant/qdrant:v1.11.3
+        ports: ["6333:6333"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            services/retrieval-service/requirements.txt
+            eval/requirements.txt
+
+      - name: Install retrieval-service dependencies (CPU-only torch)
+        run: |
+          pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install -r services/retrieval-service/requirements.txt -r eval/requirements.txt
+
+      - name: Generate gRPC stubs
+        run: |
+          python -m grpc_tools.protoc -I services/retrieval-service/proto \
+            --python_out=services/retrieval-service --grpc_python_out=services/retrieval-service \
+            services/retrieval-service/proto/retrieval.proto
+          python -m grpc_tools.protoc -I services/retrieval-service/proto \
+            --python_out=eval --grpc_python_out=eval \
+            services/retrieval-service/proto/retrieval.proto
+
+      - name: Start retrieval-service
+        working-directory: services/retrieval-service
+        env:
+          QDRANT_URL: http://localhost:6333
+        run: |
+          python server.py > "$RUNNER_TEMP/retrieval-service.log" 2>&1 &
+          timeout 60 bash -c 'until curl -sf http://localhost:9101 >/dev/null; do sleep 2; done'
+
+      - name: Ingest this repo as the eval corpus
+        # Absolute path: the server resolves repo_path against its own cwd.
+        run: |
+          python -c "
+          import sys, grpc
+          sys.path.insert(0, 'services/retrieval-service')
+          import retrieval_pb2, retrieval_pb2_grpc
+          channel = grpc.insecure_channel('localhost:50051')
+          stub = retrieval_pb2_grpc.RetrievalStub(channel)
+          resp = stub.IngestRepo(retrieval_pb2.IngestRequest(repo_path='$GITHUB_WORKSPACE', collection='codebase'), timeout=300)
+          print('ingested', resp.chunks_indexed, 'chunks from', resp.files_indexed, 'files')
+          sys.exit(0 if resp.chunks_indexed else 'ingest indexed no chunks')
+          "
+
+      - name: Run ablation
+        run: cd eval && python ablation.py
+
+      - name: Write job summary
+        if: success()
+        run: cat eval/report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: eval-report
+          path: eval/report.md
+
+      - name: Show retrieval-service log
+        if: failure()
+        run: cat "$RUNNER_TEMP/retrieval-service.log"

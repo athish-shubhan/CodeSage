@@ -1,0 +1,11 @@
+# Keeps the pinned action versions current. Python pins stay manual: several
+# are held back on purpose (see the comments in each requirements.txt).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

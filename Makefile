@@ -1,4 +1,4 @@
-.PHONY: up up-gpu up-vllm up-llamacpp down logs pull-model ingest-self test test-retrieval test-eval test-integration eval smoke bench-grpc bench-ingest
+.PHONY: up up-gpu up-vllm up-llamacpp down logs pull-model ingest-self lint test test-retrieval test-eval test-integration eval smoke bench-grpc bench-ingest
 
 up:
 	docker compose up -d --build
@@ -26,6 +26,10 @@ pull-model:
 # Indexes this repo itself as a demo corpus (mounted read-only into retrieval-service).
 ingest-self:
 	python3 scripts/ingest_repo.py --repo-path /data/codesage-agent
+
+# Same check CI runs (ruff 0.14.0, default rules).
+lint:
+	ruff check .
 
 test:
 	cd services/gateway-api && python3 -m pytest tests/ -q
