@@ -15,7 +15,7 @@ It has three parts that work together:
 3. The context and question go to a local LLM: Ollama, vLLM, or llama.cpp, chosen by an environment variable, all behind one client that speaks the OpenAI-compatible chat completions API.
 4. The answer streams back with citations in `[file:start-end]` format.
 
-The agent endpoint (`POST /agent`) adds a loop on top of this: the model can call `search_code`, `expand_context`, or `get_file` up to a few times before producing a final answer, bounded by a step limit, a tool-call limit, and a hard deadline. Every citation in the final answer is checked against what the tools actually returned in that run, and the response lists which citations are grounded and which the model made up.
+The agent endpoint (`POST /agent`) adds a loop on top of this: the model can call `search_code`, `expand_context`, or `get_file` up to a few times before producing a final answer, bounded by a step limit, a tool-call limit, and a hard deadline. Every citation in the final answer is checked against what the tools actually returned in that run, and the response lists which citations are grounded and which the model made up. Tool output is treated as untrusted data: sentences in it that read like instructions to the model are removed before it sees them and reported in the response, and the answer's code identifiers are checked against the cited text. Each run can optionally be appended to a JSON-lines audit log (`GATEWAY_AGENT_AUDIT_LOG`).
 
 Ingestion is incremental: each chunk records a hash of its file, so re-indexing a repository only re-embeds files that changed and deletes chunks of files that were removed. Qdrant is the only durable store; the in-memory keyword index is rebuilt from it after a restart.
 
@@ -63,6 +63,7 @@ Each of these is a short record of the options, what was chosen, and what it cos
 - [0003](docs/adr/0003-native-agent-loop.md) A bounded native agent loop instead of an agent framework
 - [0004](docs/adr/0004-idempotent-incremental-ingestion.md) Idempotent, incremental ingestion with Qdrant as the only durable store
 - [0005](docs/adr/0005-in-process-tracing-not-opentelemetry.md) In-process trace spans and Prometheus, not OpenTelemetry yet
+- [0006](docs/adr/0006-untrusted-tool-output.md) Treat agent tool output as untrusted data
 
 ## Measured results
 
@@ -72,6 +73,7 @@ Each of these is a short record of the options, what was chosen, and what it cos
 | Re-ingesting an unchanged repo (105 files, 353 chunks) | 0 chunks embedded (previously all 353, written as a duplicate copy of every point) | `scripts/bench_ingest.py`, ADR 0004 |
 | Re-ingesting after editing one file (README.md) | 3 chunks embedded | `scripts/bench_ingest.py` |
 | gRPC call overhead, new channel per call vs shared (loopback, 1000 calls) | p50 0.57 ms to 0.24 ms, p99 0.77 ms to 0.29 ms | `scripts/bench_grpc_channel.py` |
+| Agent injection guard on 43 labeled sentences | catches 18 of 23 injections, flags 2 of 20 benign sentences; 1 flag in 45 ordinary code/doc files (a README sentence describing this feature). Model behaviour (grounded-citation rate, abstention) not yet measured live | `eval/agent_eval.py`, ADR 0006 |
 
 ## Tests and evaluation
 
@@ -81,9 +83,10 @@ make test-retrieval    # retrieval-service unit tests
 make test-eval          # eval harness unit tests
 make test-integration   # gateway + retrieval-service over real gRPC, no Docker
 make eval               # retrieval evaluation: Recall@K, MRR, an ablation report
+make eval-agent         # agent reliability eval (injection guard, citations, abstention), no LLM needed
 ```
 
-`make bench-grpc` and `make bench-ingest` run the two benchmarks above. The retrieval-service tests run ingestion and search against an embedded Qdrant (no server), with only the embedding model swapped for a deterministic stand-in. Unit tests and a small retrieval-quality gate also run in CI. See `docs/evaluation.md` for what the evaluation harness measures and what it found.
+`make bench-grpc` and `make bench-ingest` run the two benchmarks above. The retrieval-service tests run ingestion and search against an embedded Qdrant (no server), with only the embedding model swapped for a deterministic stand-in. Unit tests, a small retrieval-quality gate, and the agent reliability gate also run in CI. See `docs/evaluation.md` for what the evaluation harness measures and what it found.
 
 ## Repository layout
 
