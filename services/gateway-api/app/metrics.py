@@ -10,3 +10,11 @@ AGENT_STOP_REASON = Counter("agent_stopped_reason_total", "Why an agent run ende
 AGENT_CITATIONS = Counter(
     "agent_citations_total", "Citations in final agent answers, by whether a tool result backs them", ["grounded"]
 )
+AGENT_UNSUPPORTED_IDENTIFIERS = Counter(
+    "agent_unsupported_identifiers_total",
+    "Code identifiers an answer attributes to a citation that the cited tool text does not contain",
+)
+AGENT_INJECTION_FLAGS = Counter(
+    "agent_injection_flags_total", "Instruction-like sentences removed from tool results, by rule", ["rule"]
+)
+AGENT_AUDIT_WRITE_FAILURES = Counter("agent_audit_write_failures_total", "Audit log lines that could not be written")
