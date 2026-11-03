@@ -53,3 +53,18 @@ def test_abstention_sweep_trades_unanswerable_catch_rate_for_recall():
     assert (off["unanswerable_abstained"], off["recall_at_k"]) == (0.0, 1.0)
     assert (mid["unanswerable_abstained"], mid["answerable_abstained"], mid["recall_at_k"]) == (1.0, 0.0, 1.0)
     assert (high["answerable_abstained"], high["recall_at_k"]) == (0.5, 0.5)
+
+
+def test_ablation_rewrite_keeps_the_agent_reliability_section(tmp_path, monkeypatch):
+    import ablation
+
+    report = tmp_path / "report.md"
+    report.write_text("# old table\n\n<!-- agent-reliability:start -->\nagent\n<!-- agent-reliability:end -->\n")
+    row = {"label": "dense only", "recall_at_k": 0.5, "recall_ci95": (0.1, 0.9), "mrr": 0.4,
+           "p50_latency_ms": 1, "p95_latency_ms": 2, "avg_context_tokens": 3, "n": 2}
+    monkeypatch.setattr(ablation, "run", lambda *a, **k: row)
+    monkeypatch.setattr(sys, "argv", ["ablation.py", "--report", str(report)])
+    ablation.main()
+    text = report.read_text()
+    assert "# old table" not in text and "# CodeSage retrieval ablation report" in text
+    assert text.endswith("\n<!-- agent-reliability:start -->\nagent\n<!-- agent-reliability:end -->\n")

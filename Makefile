@@ -1,4 +1,4 @@
-.PHONY: up up-gpu up-vllm up-llamacpp down logs pull-model ingest-self lint test test-retrieval test-eval test-integration eval smoke bench-grpc bench-ingest
+.PHONY: up up-gpu up-vllm up-llamacpp down logs pull-model ingest-self lint test test-retrieval test-eval test-integration eval eval-agent smoke bench-grpc bench-ingest
 
 up:
 	docker compose up -d --build
@@ -52,6 +52,14 @@ eval:
 		services/retrieval-service/proto/retrieval.proto
 	cd eval && python3 run_eval.py --strategy dense
 	cd eval && python3 ablation.py
+
+# Agent reliability eval (injection guard, citation grounding, abstention) with
+# scripted model turns; no stack needed. Add LIVE=1 to use the configured LLM.
+eval-agent:
+	python3 -m grpc_tools.protoc -I services/retrieval-service/proto \
+		--python_out=eval --grpc_python_out=eval \
+		services/retrieval-service/proto/retrieval.proto
+	python3 eval/agent_eval.py --gate --report eval/report.md $(if $(LIVE),--live,)
 
 smoke:
 	bash scripts/smoke_test.sh

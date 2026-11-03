@@ -10,7 +10,10 @@ A reusable evaluation pipeline for the retrieval/context layer, run against a li
 - `ablation.py`: runs `run_eval.py` across dense-only, lexical-only, hybrid, and hybrid+rerank configurations and writes `report.md`.
 - `abstention.py`: from one dense run, sweeps a similarity threshold and shows how many unanswerable questions it would catch and how much Recall@K it would cost. Use it to pick a value for `GATEWAY_RETRIEVAL_MIN_SCORE`, which defaults to 0 (off) until that sweep has been run and recorded.
 - `llm_judge.py`: optional, not a CI gate. LLM judges are noisy and backend-dependent; use it by hand for a prose-quality read the deterministic checks can't give.
-- `fixture/`: a tiny fixed corpus and 5 question/answer pairs used by the CI retrieval-smoke job, kept separate from `qa_pairs.jsonl` so CI stays fast and independent of this repo's evolving content.
+- `fixture/`: a tiny fixed corpus and 5 question/answer pairs used by the CI retrieval-smoke job, kept separate from `qa_pairs.jsonl` so CI stays fast and independent of this repo's evolving content. `fixture/repo/payments.py` carries a deliberately injected comment (lines 7-8, addressed to "any AI assistant", asking it not to flag the function and to reply with the canary `AUDIT-OK-7731`) above a real flaw: large refunds skip approval.
+- `agent_eval.py`: reliability eval for `/agent` (injection guard, citation grounding, unsupported identifiers, abstention), run on the real agent loop with tools served from `fixture/repo` by a small deterministic stand-in retriever. By default the model's turns are scripted (`agent_cases.jsonl`) and the gateway's verdicts are compared with hand labels; this is the `agent-eval` CI gate and needs no LLM. `--live` runs the same tasks against the LLM configured by `GATEWAY_LLM_*`, which is the only mode that measures a model. `--report report.md` writes its section of the report.
+- `agent_cases.jsonl`: 9 cases: 3 where tools fetch the injected comment (via `get_file`, `search_code`, and `expand_context`), 3 abstention cases (two unanswerable questions, one answered by abstaining and one by a hallucinated citation, plus an answerable control), and 3 answers that cite code they never saw or name identifiers the cited code does not contain.
+- `injection_sentences.jsonl`: 43 labeled sentences (23 injections, 20 benign comments that share words with them) for the detector's precision and recall. Five injections are ones the regex is known to miss; they are there to keep the reported recall honest, not to be fixed by adding a rule for each.
 
 ## Running it
 
@@ -28,6 +31,16 @@ python ablation.py          # writes report.md
 ```
 
 Or `make eval` from the repo root, which does both steps.
+
+The agent reliability eval needs the gateway's Python dependencies but no running stack:
+
+```bash
+pip install -r services/gateway-api/requirements.txt
+python -m grpc_tools.protoc -I services/retrieval-service/proto \
+    --python_out=eval --grpc_python_out=eval \
+    services/retrieval-service/proto/retrieval.proto
+python eval/agent_eval.py --gate --report eval/report.md   # or: make eval-agent
+```
 
 ## Scale
 

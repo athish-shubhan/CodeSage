@@ -8,6 +8,7 @@ Usage: python ablation.py [--target host:port] [--collection codebase]
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 
 from run_eval import run
@@ -20,6 +21,8 @@ CONFIGS = [
 ]
 
 REPORT_PATH = Path(__file__).parent / "report.md"
+# agent_eval.py owns this section of report.md; a re-run of the ablation keeps it.
+AGENT_SECTION_RE = re.compile(r"<!-- agent-reliability:start -->.*?<!-- agent-reliability:end -->", re.DOTALL)
 
 
 def render_report(rows: list[dict], n: int, corpus_note: str) -> str:
@@ -77,7 +80,8 @@ def main() -> None:
         print(f"{label}: recall@{args.top_k}={summary['recall_at_k']:.2f} mrr={summary['mrr']:.2f}")
 
     note = f"collection={args.collection}" + (f", {args.note}" if args.note else "")
-    args.report.write_text(render_report(rows, n, note) + "\n")
+    kept = AGENT_SECTION_RE.search(args.report.read_text()) if args.report.exists() else None
+    args.report.write_text(render_report(rows, n, note) + "\n" + (f"\n{kept.group(0)}\n" if kept else ""))
     print(f"\nWrote {args.report}")
 
 
