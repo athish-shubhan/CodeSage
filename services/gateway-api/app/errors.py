@@ -14,6 +14,8 @@ import grpc
 import httpx
 from fastapi import HTTPException, status
 
+from app.llm_client import MalformedLLMResponse
+
 log = logging.getLogger("gateway-api")
 
 
@@ -24,6 +26,8 @@ def public_detail(exc: Exception) -> str:
             # Our own validation message about the caller's request (repo_path), safe to return.
             return exc.details()
         return f"retrieval-service unavailable ({exc.code().name})"
+    if isinstance(exc, MalformedLLMResponse):
+        return "LLM backend unavailable (malformed response)"
     if isinstance(exc, httpx.TimeoutException):
         return "LLM backend unavailable (timed out)"
     if isinstance(exc, httpx.HTTPStatusError):

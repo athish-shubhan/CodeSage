@@ -96,7 +96,7 @@ Qdrant is the only durable store. The BM25 index and the repo root used by `expa
 
 ### MCP adapter
 
-`services/gateway-api/app/mcp/server.py` exposes `search_code` and `expand_context` as MCP tools over stdio, for external MCP clients to reuse CodeSage's retrieval without reimplementing the gRPC client. It wraps `app.rag_client` directly. The gateway's own `/agent` loop does not route through it; there is no benefit to adding a subprocess hop to the gateway's own request path.
+`services/gateway-api/app/mcp/server.py` exposes `search_code` and `expand_context` as MCP tools over stdio, for external MCP clients to reuse CodeSage's retrieval without reimplementing the gRPC client. It wraps `app.rag_client` directly. Its results go to another client's model, so they get the same handling as the gateway's own agent: instruction-like sentences removed and the rest wrapped in `<<untrusted ...>>` delimiters, with `top_k` and `extra_lines` bounded as the agent's tool schemas bound them. CI's `mcp-adapter` job installs only `app/mcp/requirements.txt`, imports the adapter, and runs its tests; that file was missing `protobuf` (it comes with `grpcio-tools`, not `grpcio`), so the documented install could not import the generated stubs. The gateway's own `/agent` loop does not route through it; there is no benefit to adding a subprocess hop to the gateway's own request path.
 
 The `mcp` package pulls a newer `starlette` than the one FastAPI is pinned to, and installing both in the same environment breaks FastAPI. Because of that, this adapter has its own `requirements.txt` under `app/mcp/` and is meant to run in its own environment, not inside the main `gateway-api` container.
 
@@ -134,7 +134,7 @@ JWT, issued by `POST /token` against demo credentials. Swap for a real user stor
 
 Tracing is deliberately not OpenTelemetry or Jaeger yet (`docs/adr/0005-in-process-tracing-not-opentelemetry.md`). There is one consumer of trace data (the debug trace and the eval harness), and the OpenTelemetry GenAI conventions are still marked Development. The in-process `Trace` object in `retrieval-service/tracing.py` answers "what happened and how long did it take" per request; Prometheus answers "how often" in aggregate. If this runs with several teams debugging across services, that calculation changes.
 
-The gateway's gRPC client keeps one channel per process with keepalive and retries `UNAVAILABLE` up to 3 attempts with backoff (`app/rag_client.py`, `docs/adr/0001-grpc-between-gateway-and-retrieval.md`). That is only safe because every RPC is idempotent. The LLM client has a 120 s read timeout between streamed chunks; it previously had no timeout at all on the streaming path.
+The gateway's gRPC client keeps one channel per process with keepalive and retries `UNAVAILABLE` up to 3 attempts with backoff (`app/rag_client.py`, `docs/adr/0001-grpc-between-gateway-and-retrieval.md`). That is only safe because every RPC is idempotent. The LLM client has a 120 s read timeout between streamed chunks; it previously had no timeout at all on the streaming path. A backend that answers 2xx with something other than an OpenAI-style completion (no `choices`, an `error` object, an HTML error page, a non-JSON stream chunk) raises `MalformedLLMResponse`, an `httpx.HTTPError`, so `/chat`, `/ws/chat`, and `/agent` answer 502 `LLM backend unavailable (malformed response)` instead of an unhandled 500.
 
 ## Replicas and state
 
