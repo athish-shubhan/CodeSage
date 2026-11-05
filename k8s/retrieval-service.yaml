@@ -21,6 +21,10 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }
+            readOnlyRootFilesystem: true  # writes go only to the volumes below
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: model-cache, mountPath: /home/app/.cache }  # embedding model download
           ports:
             - containerPort: 50051
             - containerPort: 9101
@@ -40,6 +44,12 @@ spec:
           livenessProbe:
             tcpSocket: { port: 50051 }
             initialDelaySeconds: 15
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: model-cache
+          emptyDir: { sizeLimit: 1Gi }
+
 ---
 apiVersion: v1
 kind: Service

@@ -38,5 +38,9 @@ EXPOSE 50051 9101
 # (~/.cache/huggingface) has somewhere writable to go. Nothing writes under /app.
 RUN useradd --create-home --uid 10001 --user-group app
 USER 10001
+# The only path this service writes. Created as the app user so a volume
+# mounted here (compose's model-cache volume) starts out writable by it; with
+# a read-only root filesystem, mount a volume or emptyDir here.
+RUN mkdir -p /home/app/.cache
 
 CMD ["python", "server.py"]

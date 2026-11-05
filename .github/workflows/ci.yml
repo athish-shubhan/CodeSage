@@ -259,16 +259,25 @@ jobs:
         # A build only proves the image assembles. This proves it starts, serves
         # its health endpoint, and runs as a non-root user.
         run: |
+          # Run it the way compose and k8s do: read-only root filesystem, a
+          # tmpfs /tmp, and (retrieval-service) a volume for the model cache.
           if [ "${{ matrix.service }}" = gateway-api ]; then
-            port=8000; probe=http://localhost:8000/livez
+            port=8000; probe=http://localhost:8000/livez; mounts=""
           else
             port=9101; probe=http://localhost:9101  # metrics; starts without Qdrant (connected lazily)
+            mounts="-v model-cache:/home/app/.cache"
           fi
-          docker run -d --name svc -p "$port:$port" codesage/${{ matrix.service }}:ci
+          docker run -d --name svc --read-only --tmpfs /tmp $mounts -p "$port:$port" codesage/${{ matrix.service }}:ci
           timeout 60 bash -c "until curl -sf $probe >/dev/null; do sleep 2; done" || { docker logs svc; exit 1; }
           uid=$(docker exec svc id -u)
           echo "running as uid $uid"
           [ "$uid" != 0 ] || { echo "container runs as root"; exit 1; }
+          if docker exec svc touch /app/.write-probe 2>/dev/null; then echo "root filesystem is writable"; exit 1; fi
+          echo "root filesystem is read-only"
+          if [ -n "$mounts" ]; then
+            docker exec svc touch /home/app/.cache/.write-probe || { echo "model cache volume not writable by uid $uid"; exit 1; }
+            echo "model cache volume is writable"
+          fi
 
   proto-sync:
     # Each service keeps its own copy of the proto so its Docker build

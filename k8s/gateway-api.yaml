@@ -21,6 +21,9 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }
+            readOnlyRootFilesystem: true  # writes go only to the volumes below
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
           ports:
             - containerPort: 8000
           env:
@@ -49,6 +52,10 @@ spec:
             httpGet: { path: /livez, port: 8000 }
             initialDelaySeconds: 5
             periodSeconds: 10
+      volumes:
+        - name: tmp
+          emptyDir: {}
+
 ---
 apiVersion: v1
 kind: Secret

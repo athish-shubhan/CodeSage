@@ -285,3 +285,32 @@ There is no Docker daemon in this environment, so neither change could be run he
 
 - `readOnlyRootFilesystem` is not set: retrieval-service needs a writable home for the model cache, which would need an `emptyDir` or a pre-downloaded model in the image.
 - Compose does not set `user:`; it relies on the image's `USER`.
+
+## Round 8: read-only root filesystems, a pinned MCP dependency
+
+Branch `improve/round-8`, from `master` after rounds 1-7 merged.
+
+### 1. Containers could write anywhere in their own filesystem
+
+**Found:** left open in round 7. Both services run as uid 10001 but with a writable root filesystem, so anything that gets code execution in either container can modify the installed application and its dependencies. Neither service needs that: the gateway writes nothing, and retrieval-service writes only the embedding model download under `~/.cache`.
+
+**Changed:** the k8s Deployments set `readOnlyRootFilesystem: true` with an `emptyDir` at `/tmp` for both and one at `/home/app/.cache` (1 GiB) for retrieval-service. Compose (main and edge) uses `read_only: true`, a tmpfs `/tmp`, and a named `model-cache` volume, which also means the model is no longer downloaded again after every container restart. The retrieval image creates `/home/app/.cache` as uid 10001: a named volume mounted where the image has no directory comes up owned by root, and the model download would fail.
+
+**Verified in CI** (no Docker daemon here): `build-images` now starts each image with `--read-only --tmpfs /tmp` (plus the model-cache volume for retrieval-service), waits for its health endpoint, and checks that writing under `/app` fails and, for retrieval-service, that writing to the cache volume succeeds. The result is recorded in the PR. The k8s files were checked to parse; they have not been applied to a cluster.
+
+### 2. The MCP adapter installed whatever `mcp` was newest
+
+**Found:** `app/mcp/requirements.txt` had `mcp>=2.0.0`, so an `mcp` release could change or break the adapter without any change in this repo; every other dependency is pinned.
+
+**Changed:** pinned to `mcp==2.3.0`, the version the `mcp-adapter` CI job has been testing.
+
+**Verified:** a fresh venv from the requirements file installs 2.3.0, imports the adapter, and passes its 3 tests.
+
+### Results
+
+No Python code changed: gateway-api 118 passed (1 skipped), retrieval-service 69, integration 5, eval 31, agent eval gate 45/45, ruff clean (run on this branch).
+
+### Not done
+
+- Ingest across replicas is still unserialized (see round 6): fixing it needs a lease in shared storage or routing every ingest to one replica, a design choice rather than a local fix.
+- The live column of the eval report still needs a reachable LLM.
