@@ -101,3 +101,11 @@ Branch `improve/round-3`, stacked on `improve/round-2` (athish-shubhan/CodeSage#
 **Changed:** 503 with the same body (plus `"ready": false`) when either dependency is down. `/livez` is unchanged. `scripts/smoke_test.sh` uses `--fail-with-body` so a 503 still prints which dependency is down.
 
 **Verified:** 5 new tests (all four up/down combinations, and `/livez` staying 200).
+
+### 2. A retrieval replica kept a stale lexical index after another replica's ingest
+
+**Found:** the documented gap in "Replicas and state": the BM25 index lives in each replica's memory and was only rebuilt when missing. Reproduced by giving a second "replica" the first one's in-memory state after another ingest: lexical search missed a newly added file and still returned chunks of a deleted one. Separately, every dense search (the default) called `restore`, which builds the lexical index after a restart although dense search never reads it.
+
+**Changed:** each ingest writes a fresh generation id to a one-point companion collection (`<collection>__ingest_meta`); `restore` rebuilds when the stored generation differs from the one the replica's index was built from. Cost: one point lookup per lexical or hybrid search, `expand_context`, and `get_file`. Dense-only search no longer calls `restore`. Collections ingested before this change have no generation and are rebuilt once, not on every call.
+
+**Verified:** 5 new tests against embedded Qdrant: the added-file and deleted-file cases (both failed before the change), dense search not building the index (also failed before), a never-ingested collection, and a pre-generation collection rebuilding exactly once over three searches.
