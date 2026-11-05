@@ -21,6 +21,11 @@ from tracing import Trace
 
 log = logging.getLogger("retrieval-service")
 
+# Points per embed + upsert round. One request per ingest stopped working
+# past a few thousand chunks: a point averages ~8.9 KB of JSON on this repo
+# (384-d vector plus chunk text), and Qdrant rejects requests over its 32 MB
+# default (service.max_request_size_mb). 256 points is ~2.3 MB.
+UPSERT_BATCH = 256
 CANDIDATE_K = 20  # each of dense/lexical fetches this many before fusion narrows it down
 RERANK_CANDIDATES = CANDIDATE_K * 2
 
@@ -90,7 +95,8 @@ def ingest(collection: str, repo_path: str, include_globs: list[str] | None = No
 
     if payloads:
         vector_store.ensure_collection(collection, embedding_dim())
-        vector_store.upsert(collection, embed([p["text"] for p in payloads]), payloads)
+        for batch in _file_batches(payloads, UPSERT_BATCH):
+            vector_store.upsert(collection, embed([p["text"] for p in batch]), batch)
 
     # The lexical index is cheap to rebuild whole and must reflect deletes too.
     all_chunks = vector_store.all_payloads(collection)
@@ -108,6 +114,27 @@ def ingest(collection: str, repo_path: str, include_globs: list[str] | None = No
     )
     log.info("ingest %s: %s", collection, result)
     return result
+
+
+def _file_batches(payloads: list[dict], size: int):
+    """Splits payloads (grouped by file, as ingest builds them) into batches
+    of about `size`, never splitting one file across two batches. If ingest
+    dies between batches, every file is then either fully written with its
+    hash or absent; a half-written file would carry its new hash, look
+    unchanged to the next ingest, and never get its missing chunks."""
+    batch: list[dict] = []
+    i = 0
+    while i < len(payloads):
+        j = i
+        while j < len(payloads) and payloads[j]["source_path"] == payloads[i]["source_path"]:
+            j += 1
+        if batch and len(batch) + (j - i) > size:
+            yield batch
+            batch = []
+        batch.extend(payloads[i:j])
+        i = j
+    if batch:
+        yield batch
 
 
 def restore(collection: str) -> None:

@@ -160,3 +160,59 @@ def test_search_stops_before_embedding_when_caller_is_gone(repo, fresh_state):
     with pytest.raises(pipeline.Cancelled):
         pipeline.search(COLLECTION, "add", is_active=lambda: False)
     assert len(fresh_state) == embeds_before
+
+
+def _many_files_repo(tmp_path, n_files, funcs_per_file):
+    for f in range(n_files):
+        body = "\n\n".join(f"def f{f}_{k}(x):\n    return x + {k}\n" for k in range(funcs_per_file))
+        (tmp_path / f"mod{f}.py").write_text(body)
+    return tmp_path
+
+
+def test_ingest_upserts_in_batches_that_never_split_a_file(tmp_path, monkeypatch):
+    repo = _many_files_repo(tmp_path, n_files=7, funcs_per_file=3)
+    monkeypatch.setattr(pipeline, "UPSERT_BATCH", 5)
+    batches = []
+    real_upsert = vector_store.upsert
+    monkeypatch.setattr(
+        vector_store, "upsert", lambda c, v, p: (batches.append([x["source_path"] for x in p]), real_upsert(c, v, p))
+    )
+
+    result = pipeline.ingest(COLLECTION, str(repo))
+
+    assert result.chunks_embedded == sum(len(b) for b in batches) == 21
+    assert len(batches) > 1 and all(len(b) <= 5 for b in batches)
+    owners = {}
+    for i, b in enumerate(batches):
+        for path in b:
+            owners.setdefault(path, set()).add(i)
+    assert all(len(v) == 1 for v in owners.values())  # each file lands in exactly one batch
+
+
+def test_a_single_file_larger_than_a_batch_still_goes_in_one_request():
+    payloads = [{"source_path": "big.py"}] * 7 + [{"source_path": "a.py"}] * 2
+    assert [len(b) for b in pipeline._file_batches(payloads, 3)] == [7, 2]
+
+
+def test_ingest_that_dies_between_batches_is_repaired_by_the_next_ingest(tmp_path, monkeypatch):
+    repo = _many_files_repo(tmp_path, n_files=6, funcs_per_file=3)  # 3 chunks/file, 4 per batch
+    monkeypatch.setattr(pipeline, "UPSERT_BATCH", 4)
+    calls = {"n": 0}
+
+    def dies_on_second_batch(texts):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("embedder crashed")
+        return fake_embed(texts)
+
+    monkeypatch.setattr(pipeline, "embed", dies_on_second_batch)
+    with pytest.raises(RuntimeError):
+        pipeline.ingest(COLLECTION, str(repo))
+    assert 0 < len(vector_store.all_payloads(COLLECTION)) < 18  # partly written
+
+    monkeypatch.setattr(pipeline, "embed", fake_embed)
+    result = pipeline.ingest(COLLECTION, str(repo))
+
+    stored = vector_store.all_payloads(COLLECTION)
+    assert result.chunks_total == len(stored) == 18
+    assert {p["source_path"] for p in stored} == {f"mod{f}.py" for f in range(6)}

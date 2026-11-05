@@ -17,6 +17,18 @@ from app.config import settings
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+def insecure_defaults() -> list[str]:
+    """Settings still at their shipped demo values. Fine for `make up` on a
+    laptop; anyone who reads this repo can then mint tokens or log in."""
+    shipped = {name: field.default for name, field in type(settings).model_fields.items()}
+    problems = []
+    if settings.jwt_secret == shipped["jwt_secret"]:
+        problems.append("GATEWAY_JWT_SECRET is the default, so anyone can sign valid tokens")
+    if (settings.demo_username, settings.demo_password) == (shipped["demo_username"], shipped["demo_password"]):
+        problems.append("GATEWAY_DEMO_USERNAME/GATEWAY_DEMO_PASSWORD are admin/admin")
+    return problems
+
+
 # Hashed once at import time so the demo password is never stored in plaintext.
 _DEMO_HASH = pwd_context.hash(settings.demo_password)
 

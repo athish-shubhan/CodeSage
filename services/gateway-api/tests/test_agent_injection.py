@@ -86,3 +86,31 @@ async def test_unsupported_identifiers_are_reported_on_the_state():
     )
     assert state.citations["grounded"] == ["payments.py:6-11"]
     assert state.unsupported_identifiers == [{"identifier": "issue_refund", "citations": ["payments.py:6-11"]}]
+
+
+@pytest.mark.asyncio
+async def test_invented_tool_names_share_one_metric_series():
+    from app.metrics import AGENT_TOOL_CALLS
+
+    def series():
+        return {s.labels["tool"] for m in AGENT_TOOL_CALLS.collect() for s in m.samples if s.name.endswith("_total")}
+
+    before = series()
+    calls = [{"id": str(i), "function": {"name": f"invented_{i}", "arguments": "{}"}} for i in range(4)]
+    llm = ScriptedLLM([{"role": "assistant", "tool_calls": calls}, {"role": "assistant", "content": "done"}])
+    with patch("app.agent.loop.complete_with_tools", new=llm):
+        state = await run_agent("x")
+    assert series() - before <= {"unknown"}
+    assert all(not s.startswith("invented_") for s in series())
+    assert state.tool_calls[0].result == "Unknown tool: invented_0"
+
+
+@pytest.mark.asyncio
+async def test_malformed_tool_arguments_get_an_accurate_error_and_no_call():
+    tool = AsyncMock(return_value="should not run")
+    llm = ScriptedLLM([_call("search_code", "{oops"), {"role": "assistant", "content": "done"}])
+    with patch("app.agent.loop.complete_with_tools", new=llm), patch("app.agent.loop.call_tool", new=tool):
+        state = await run_agent("x")
+    tool.assert_not_called()
+    assert state.tool_calls[0].args == {}
+    assert state.tool_calls[0].result == "Invalid arguments for search_code: arguments must be a JSON object."
