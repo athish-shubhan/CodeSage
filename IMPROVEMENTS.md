@@ -223,3 +223,40 @@ Branch `improve/round-5`, stacked on `improve/round-4` (athish-shubhan/CodeSage#
 
 - `mcp>=2.0.0` is still unpinned in the adapter's requirements, as the original authors chose; CI installs whatever is newest (2.3.0 here).
 - The live column of the eval report still has not been run.
+
+## Round 6: unforgeable citation evidence, one ingest per collection at a time
+
+Branch `improve/round-6`, stacked on `improve/round-5` (athish-shubhan/CodeSage#6).
+
+### 1. Citation-shaped text inside retrieved content counted as evidence
+
+**Found:** a flaw in the Round 0 citation checker. Evidence for a `search_code` result came from running the citation regex over the whole result, chunk bodies included, and `/chat` (Round 4) reused the same check. Reproduced three ways: a retrieved doc that mentions `[auth.py:5-12]` made a citation to `auth.py:5-12` grounded though `auth.py` was never shown; a planted line `[secrets.py:1-1000]` inside a chunk made `[secrets.py:40-41]` grounded and the real chunk's own range ungrounded; and `/chat` grounded `auth.py:5-12` from a README chunk that only mentions it. This repo's own docs (including this file) quote citations, so it happens with honest content too, not only planted text.
+
+**Changed:** only header lines (`[path:start-end]` alone on a line) are evidence, and `escape_header_lines` prefixes a backslash to any line of retrieved content shaped exactly like a header, in `search_code` results, the `/chat` prompt, and the `/chat` check, so the model and the checker see the same defused text. Inline mentions are left as written.
+
+**Verified:** 4 new tests (inline mention, forged header line, `search_code` escaping, `/chat` end to end); all 4 fail on the old code. The agent eval gate is unchanged at 45/45.
+
+### 2. Concurrent ingests of one collection embedded the repo twice
+
+**Found:** two `IngestRepo` calls on the same collection at once, which a retried RPC (the gateway's client retries `UNAVAILABLE`) or a double-submitted `/ingest` produces, each saw every file as changed. Measured with a 5-chunk repo and a slowed embedder: 10 chunks embedded for 5 chunks of content.
+
+**Changed:** ingests of one collection are serialized per process; the second waits and finds nothing changed. Different collections do not wait for each other. Two replicas ingesting the same collection at the same time can still both do the work (documented).
+
+**Verified:** the same measurement now embeds 5 chunks (one ingest embeds 5, the other 0); 2 new tests.
+
+### Results
+
+| Suite | Before (round 5) | After |
+|---|---|---|
+| gateway-api | 114 (+1 skipped) | 118 passed, 1 skipped |
+| mcp-adapter (own venv) | 3 | 3 passed |
+| retrieval-service | 67 | 69 passed |
+| integration | 5 | 5 passed |
+| eval | 31 | 31 passed |
+| agent eval gate | 45/45 | 45/45 (detector 0.90 / 0.78 unchanged) |
+| ruff 0.14.0 | clean | clean |
+
+### Not done
+
+- Ingest serialization is per process, not across replicas.
+- The live column of the eval report still has not been run: no model weights are reachable from this environment (Hugging Face, the Ollama registry and GitHub releases are blocked by the proxy).

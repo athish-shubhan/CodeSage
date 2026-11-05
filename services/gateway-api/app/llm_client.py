@@ -21,6 +21,7 @@ from collections.abc import AsyncIterator
 import httpx
 
 from app.agent import untrusted
+from app.agent.citations import escape_header_lines
 from app.config import settings
 
 SYSTEM_PROMPT = (
@@ -42,7 +43,10 @@ def build_prompt(question: str, context_chunks: list[dict]) -> str:
     else:
         context = untrusted.wrap(
             "retrieval",
-            "\n\n".join(f"[{c['source_path']}:{c['start_line']}-{c['end_line']}]\n{c['text']}" for c in context_chunks),
+            "\n\n".join(
+                f"[{c['source_path']}:{c['start_line']}-{c['end_line']}]\n{escape_header_lines(c['text'])}"
+                for c in context_chunks
+            ),
         )
     return f"# Retrieved context\n{context}\n\n# Question\n{question}"
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from app import rag_client
-from app.agent.citations import truncation_notice
+from app.agent.citations import escape_header_lines, truncation_notice
 
 MAX_FILE_BYTES = 20_000
 
@@ -36,7 +36,9 @@ async def search_code(args: SearchCodeArgs) -> str:
     hits = await rag_client.search(args.query, top_k=args.top_k)
     if not hits:
         return "No matching code found."
-    return "\n\n".join(f"[{h['source_path']}:{h['start_line']}-{h['end_line']}]\n{h['text']}" for h in hits)
+    return "\n\n".join(
+        f"[{h['source_path']}:{h['start_line']}-{h['end_line']}]\n{escape_header_lines(h['text'])}" for h in hits
+    )
 
 
 async def expand_context(args: ExpandContextArgs) -> str:

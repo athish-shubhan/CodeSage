@@ -304,3 +304,33 @@ def test_symlink_into_an_allowed_root_is_judged_by_its_target(repo, tmp_path_fac
 def test_unset_allowed_roots_keeps_the_old_behaviour(repo, monkeypatch):
     monkeypatch.delenv("INGEST_ALLOWED_ROOTS", raising=False)
     assert pipeline.ingest(COLLECTION, str(repo)).files_seen == 4
+
+
+def test_concurrent_ingests_of_one_collection_embed_the_repo_once(tmp_path, monkeypatch):
+    import threading
+    import time
+
+    repo = _many_files_repo(tmp_path, n_files=5, funcs_per_file=1)
+    embedded = []
+
+    def slow_embed(texts):
+        time.sleep(0.2)  # long enough for the second ingest to start mid-way
+        embedded.append(len(texts))
+        return fake_embed(texts)
+
+    monkeypatch.setattr(pipeline, "embed", slow_embed)
+    results = []
+    threads = [threading.Thread(target=lambda: results.append(pipeline.ingest(COLLECTION, str(repo)))) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert sorted(r.chunks_embedded for r in results) == [0, 5]
+    assert sum(embedded) == 5
+    assert all(r.chunks_total == 5 for r in results)
+
+
+def test_ingests_of_different_collections_do_not_wait_for_each_other(tmp_path):
+    assert pipeline._ingest_lock("a") is pipeline._ingest_lock("a")
+    assert pipeline._ingest_lock("a") is not pipeline._ingest_lock("b")
