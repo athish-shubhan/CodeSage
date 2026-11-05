@@ -97,6 +97,38 @@ def search(collection: str, query_vector: list[float], top_k: int) -> list[dict]
     return [{**hit.payload, "score": hit.score} for hit in hits]
 
 
+# Each ingest stamps the collection with a fresh generation id, kept in a
+# one-point companion collection. A replica compares it with the generation
+# its in-memory BM25 index was built from, to notice an ingest that went
+# through another replica (see pipeline.restore).
+_GENERATION_POINT = str(uuid.uuid5(uuid.NAMESPACE_URL, "codesage/ingest-generation"))
+
+
+def _meta_collection(collection: str) -> str:
+    return f"{collection}__ingest_meta"
+
+
+def set_generation(collection: str, generation: str) -> None:
+    meta = _meta_collection(collection)
+    ensure_collection(meta, 1)
+    get_client().upsert(
+        collection_name=meta,
+        points=[qmodels.PointStruct(id=_GENERATION_POINT, vector=[1.0], payload={"generation": generation})],
+    )
+
+
+def get_generation(collection: str) -> str | None:
+    """The collection's current ingest generation, or None if it was never
+    stamped (not ingested yet, or ingested before generations existed)."""
+    try:
+        points = get_client().retrieve(collection_name=_meta_collection(collection), ids=[_GENERATION_POINT])
+    except (UnexpectedResponse, ValueError) as exc:
+        if isinstance(exc, UnexpectedResponse) and exc.status_code != 404:
+            raise
+        return None
+    return points[0].payload.get("generation") if points else None
+
+
 def health() -> str:
     try:
         get_client().get_collections()

@@ -216,3 +216,91 @@ def test_ingest_that_dies_between_batches_is_repaired_by_the_next_ingest(tmp_pat
     stored = vector_store.all_payloads(COLLECTION)
     assert result.chunks_total == len(stored) == 18
     assert {p["source_path"] for p in stored} == {f"mod{f}.py" for f in range(6)}
+
+
+def _as_other_replica(saved_indexes, saved_roots):
+    """Swap in another replica's in-memory state: same Qdrant, its own BM25 index and repo roots."""
+    bm25_index._indexes.clear()
+    bm25_index._indexes.update(saved_indexes)
+    context_expand._repo_roots.clear()
+    context_expand._repo_roots.update(saved_roots)
+
+
+def test_replica_sees_an_ingest_that_went_through_another_replica(repo):
+    pipeline.ingest(COLLECTION, str(repo))
+    pipeline.search(COLLECTION, "verify_token", strategy="lexical")
+    replica_b = (dict(bm25_index._indexes), dict(context_expand._repo_roots))
+
+    (repo / "billing.py").write_text("def charge_zebra_quokka(amount):\n    return amount\n")
+    pipeline.ingest(COLLECTION, str(repo))  # through replica A
+
+    _as_other_replica(*replica_b)
+    hits = pipeline.search(COLLECTION, "charge_zebra_quokka", strategy="lexical")["chunks"]
+    assert [h["source_path"] for h in hits][:1] == ["billing.py"]
+
+
+def test_replica_drops_chunks_another_replica_deleted(repo):
+    pipeline.ingest(COLLECTION, str(repo))
+    pipeline.search(COLLECTION, "verify_token", strategy="lexical")
+    replica_b = (dict(bm25_index._indexes), dict(context_expand._repo_roots))
+
+    (repo / "auth.py").unlink()
+    pipeline.ingest(COLLECTION, str(repo))
+
+    _as_other_replica(*replica_b)
+    hits = pipeline.search(COLLECTION, "verify_token", strategy="lexical")["chunks"]
+    assert "auth.py" not in {h["source_path"] for h in hits}
+
+
+def test_dense_search_does_not_build_the_lexical_index(repo):
+    pipeline.ingest(COLLECTION, str(repo))
+    bm25_index._indexes.clear()  # as after a restart
+    pipeline.search(COLLECTION, "verify token", strategy="dense")
+    assert not bm25_index.has_index(COLLECTION)
+
+
+def test_generation_is_none_for_a_collection_never_ingested():
+    assert vector_store.get_generation("never-ingested") is None
+
+
+def test_collection_ingested_before_generations_is_not_rebuilt_on_every_call(repo, monkeypatch):
+    pipeline.ingest(COLLECTION, str(repo))
+    vector_store.get_client().delete_collection(f"{COLLECTION}__ingest_meta")  # as an old deployment
+    bm25_index._indexes.clear()
+    builds = []
+    real_build = bm25_index.build_index
+    monkeypatch.setattr(bm25_index, "build_index", lambda *a, **k: (builds.append(1), real_build(*a, **k)))
+
+    for _ in range(3):
+        pipeline.search(COLLECTION, "verify_token", strategy="lexical")
+
+    assert len(builds) == 1  # rebuilt once after the "restart", then reused
+
+
+def test_ingest_outside_allowed_roots_is_refused_before_touching_anything(repo, tmp_path_factory, monkeypatch):
+    allowed = tmp_path_factory.mktemp("allowed")
+    (allowed / "app.py").write_text("def run():\n    return 1\n")
+    monkeypatch.setenv("INGEST_ALLOWED_ROOTS", f"{allowed}{os.pathsep}/nonexistent-root")
+
+    with pytest.raises(ValueError, match="outside INGEST_ALLOWED_ROOTS"):
+        pipeline.ingest(COLLECTION, str(repo))
+    with pytest.raises(ValueError, match="outside INGEST_ALLOWED_ROOTS"):
+        pipeline.ingest(COLLECTION, "/no/such/dir")  # refused, not "not a directory"
+    with pytest.raises(ValueError, match="outside INGEST_ALLOWED_ROOTS"):
+        pipeline.ingest(COLLECTION, f"{allowed}/../{repo.name}")  # .. cannot climb out
+    assert vector_store.all_payloads(COLLECTION) == []
+
+    assert pipeline.ingest(COLLECTION, str(allowed)).files_seen == 1
+
+
+def test_symlink_into_an_allowed_root_is_judged_by_its_target(repo, tmp_path_factory, monkeypatch):
+    allowed = tmp_path_factory.mktemp("allowed")
+    (allowed / "escape").symlink_to(repo, target_is_directory=True)
+    monkeypatch.setenv("INGEST_ALLOWED_ROOTS", str(allowed))
+    with pytest.raises(ValueError, match="outside INGEST_ALLOWED_ROOTS"):
+        pipeline.ingest(COLLECTION, str(allowed / "escape"))
+
+
+def test_unset_allowed_roots_keeps_the_old_behaviour(repo, monkeypatch):
+    monkeypatch.delenv("INGEST_ALLOWED_ROOTS", raising=False)
+    assert pipeline.ingest(COLLECTION, str(repo)).files_seen == 4

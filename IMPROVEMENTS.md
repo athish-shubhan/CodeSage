@@ -89,3 +89,48 @@ Branch `improve/round-2`, stacked on `improve/round-1` (athish-shubhan/CodeSage#
 
 - The 32 MB limit and the batch size were not exercised against a real Qdrant server here; CI's `retrieval-smoke` job uses one but only ingests 4 files.
 - Request limits are per request, not per user; there is still no rate limiting in the gateway (Traefik is the documented place for it).
+
+## Round 3: readiness that gates traffic, replica-fresh lexical index, ingest path allowlist
+
+Branch `improve/round-3`, stacked on `improve/round-2` (athish-shubhan/CodeSage#3).
+
+### 1. `/healthz` returned 200 with its dependencies down
+
+**Found:** the k8s readiness probe is an `httpGet` on `/healthz`, which only looks at the status code, but `/healthz` returned 200 whatever the LLM backend and retrieval-service reported. Reproduced: with both mocked down it answered 200 with `"llm_status": "unreachable"` in the body. The readiness probe could never take a pod out of rotation.
+
+**Changed:** 503 with the same body (plus `"ready": false`) when either dependency is down. `/livez` is unchanged. `scripts/smoke_test.sh` uses `--fail-with-body` so a 503 still prints which dependency is down.
+
+**Verified:** 5 new tests (all four up/down combinations, and `/livez` staying 200).
+
+### 2. A retrieval replica kept a stale lexical index after another replica's ingest
+
+**Found:** the documented gap in "Replicas and state": the BM25 index lives in each replica's memory and was only rebuilt when missing. Reproduced by giving a second "replica" the first one's in-memory state after another ingest: lexical search missed a newly added file and still returned chunks of a deleted one. Separately, every dense search (the default) called `restore`, which builds the lexical index after a restart although dense search never reads it.
+
+**Changed:** each ingest writes a fresh generation id to a one-point companion collection (`<collection>__ingest_meta`); `restore` rebuilds when the stored generation differs from the one the replica's index was built from. Cost: one point lookup per lexical or hybrid search, `expand_context`, and `get_file`. Dense-only search no longer calls `restore`. Collections ingested before this change have no generation and are rebuilt once, not on every call.
+
+**Verified:** 5 new tests against embedded Qdrant: the added-file and deleted-file cases (both failed before the change), dense search not building the index (also failed before), a never-ingested collection, and a pre-generation collection rebuilding exactly once over three searches.
+
+### 3. `IngestRepo` accepted any path on the retrieval host
+
+**Found:** an authenticated `/ingest` call could index any directory the retrieval-service can read; search and `get_file` then serve its files. On this machine `repo_path="/etc"` would index 27 files (config TOML, JSON policies, shell profiles). The gateway also reported every gRPC error as 503 "retrieval-service unavailable", including a refused or mistyped `repo_path`.
+
+**Changed:** `INGEST_ALLOWED_ROOTS` (`:`-separated) limits ingest to those directories, checked on the real path so `..` and symlinks cannot climb out, and checked before existence so a refusal does not reveal whether a path exists. Unset keeps the old behaviour; `docker-compose.yml`, the edge compose file, and `k8s/retrieval-service.yaml` set it to `/data`, where repos are mounted (`make ingest-self` uses `/data/codesage-agent`). The gateway maps `INVALID_ARGUMENT` to 400.
+
+**Verified:** 3 new retrieval-service tests (outside root, nonexistent path refused rather than "not a directory", `..` escape, symlink into the root judged by its target, unset env unchanged) and 1 gateway test for the 400. Compose and k8s files still parse.
+
+### Results
+
+| Suite | Before (round 2) | After |
+|---|---|---|
+| gateway-api | 95 | 101 passed |
+| retrieval-service | 57 | 65 passed |
+| integration | 5 | 5 passed |
+| eval | 29 | 29 passed |
+| agent eval gate | passed | passed (36/36, detector 0.90 / 0.78, unchanged) |
+| ruff 0.14.0 | clean | clean |
+
+### Not done
+
+- The compose and k8s changes were validated as YAML only; there is no Docker daemon in this environment to bring the stack up. `make ingest-self` uses `/data/codesage-agent`, inside the new allowlist.
+- Generation checks cover ingests through any replica, but not someone editing Qdrant by hand.
+- The gateway still forwards gRPC and LLM error details to clients verbatim (internal hostnames can appear in them).

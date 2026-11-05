@@ -73,7 +73,9 @@ New chunks are embedded and upserted in batches of about 256 points (`pipeline.U
 
 The indexed repository is not trusted, so neither ingest nor the file tools follow a symlink out of it. `iter_source_files` skips a file whose real path is outside the repo (a link's own name picks the extension, so `notes.md -> ~/.ssh/id_rsa` would otherwise be indexed), and `expand_context`/`get_file` resolve symlinks before checking that the path stays under the repo root (`context_expand.resolve_inside`). Links that stay inside the repo still work.
 
-Qdrant is the only durable store. The BM25 index and the repo root used by `expand_context`/`get_file` are rebuilt from Qdrant payloads on first use after a restart (`pipeline.restore`). Before this, a restarted retrieval-service, or the second of the two k8s replicas, had no lexical index and could not read files until someone re-ingested.
+`IngestRepo` itself can be limited to a set of directories with `INGEST_ALLOWED_ROOTS` (separated by `:`). Unset, any path is accepted, as before; the shipped compose files and k8s manifest set it to `/data`, where repos are mounted, because otherwise any token holder could ingest a host directory such as `/etc` and read its files back through search and `get_file`. The real path is checked (so `..` and symlinks cannot climb out), and before existence, so a refused path does not reveal whether it exists. The gateway returns such a refusal as 400, not 503.
+
+Qdrant is the only durable store. The BM25 index and the repo root used by `expand_context`/`get_file` are rebuilt from Qdrant payloads on first use after a restart, or after an ingest that went through another replica (`pipeline.restore`, see "Replicas and state"). Before this, a restarted retrieval-service, or the second of the two k8s replicas, had no lexical index and could not read files until someone re-ingested.
 
 ## Agent layer: bounded tool-calling loop
 
@@ -118,7 +120,7 @@ Ollama serves a quantized model (`llama3.1:8b-instruct-q4_0` by default) so the 
 
 ## Liveness vs. readiness
 
-`gateway-api` exposes two health endpoints on purpose. `/livez` checks only that the process itself is alive. `/healthz` aggregates the LLM backend and retrieval-service. Liveness probes point at `/livez` and readiness probes at `/healthz`, otherwise a slow-to-load model or a restarting retrieval-service would cause Kubernetes to kill and restart an otherwise fine gateway pod. Compose mirrors the same idea: `gateway-api` has a soft dependency on the LLM backend, it starts and answers `/healthz` honestly even before Ollama, vLLM, or llama.cpp is ready, rather than blocking the whole stack's boot on it.
+`gateway-api` exposes two health endpoints on purpose. `/livez` checks only that the process itself is alive. `/healthz` aggregates the LLM backend and retrieval-service, and answers 503 with the same body (`"ready": false`) when either is down. Kubernetes' `httpGet` probe only looks at the status code, and this endpoint used to return 200 either way, so the readiness probe never took a pod out of rotation. Liveness probes point at `/livez` and readiness probes at `/healthz`, otherwise a slow-to-load model or a restarting retrieval-service would cause Kubernetes to kill and restart an otherwise fine gateway pod. Compose mirrors the same idea: `gateway-api` has a soft dependency on the LLM backend, it starts and answers `/healthz` honestly even before Ollama, vLLM, or llama.cpp is ready, rather than blocking the whole stack's boot on it.
 
 ## Auth
 
@@ -136,7 +138,7 @@ The gateway's gRPC client keeps one channel per process with keepalive and retri
 
 `gateway-api` holds no state across requests. `AgentState` lives for one `/agent` call, and neither `/chat` nor the WebSocket keeps conversation history, so `k8s/gateway-api.yaml`'s `replicas: 2` is safe. The flip side is that there is no multi-turn memory: each question is answered on its own. The optional agent audit log is append-only output, not state a request reads back, so it does not change this.
 
-`retrieval-service` also runs two replicas. Its durable state is in Qdrant; the in-memory BM25 index is rebuilt from Qdrant on first use (see "Ingestion"). One gap remains: a replica that has already built its BM25 index does not see a later ingest that went through the other replica until it restarts. This only affects the non-default `hybrid` and `lexical` strategies.
+`retrieval-service` also runs two replicas. Its durable state is in Qdrant; the in-memory BM25 index is rebuilt from Qdrant when it is missing or stale (see "Ingestion"). Every ingest stamps the collection with a new generation id in a one-point companion collection (`<collection>__ingest_meta`), and `pipeline.restore` compares it with the generation the replica's index was built from, so a replica picks up an ingest that went through the other replica on its next lexical or hybrid search, `expand_context`, or `get_file`, at the cost of one point lookup per call. This used to need a restart. Dense-only search, the default, no longer builds the lexical index at all.
 
 ## Other decisions and why
 

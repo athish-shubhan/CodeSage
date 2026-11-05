@@ -30,9 +30,10 @@ services:
         condition: service_healthy
       # Deliberately NOT depends_on ollama: the LLM backend is swappable
       # (see docker-compose.vllm.yml / docker-compose.llamacpp.yml) and
-      # gateway-api treats it as a soft dependency: it starts and serves
-      # /healthz regardless, and /chat calls fail individually until the
-      # backend is ready, rather than blocking the whole stack's boot on it.
+      # gateway-api treats it as a soft dependency: it starts regardless,
+      # /healthz answers 503 (not ready) until the backend is reachable, and
+      # /chat calls fail individually until then, rather than blocking the
+      # whole stack's boot on it.
     healthcheck:
       # Compose only has one healthcheck slot (no separate liveness/readiness
       # like k8s), so this points at /livez, a process-alive check, not the
@@ -56,6 +57,9 @@ services:
       # container's CPU limit below; match it to the limit so concurrent
       # requests don't oversubscribe a 2-CPU quota (see docs/evaluation.md).
       OMP_NUM_THREADS: "2"
+      # IngestRepo only reads repos mounted under /data; any other path (/etc,
+      # the service's own code) is refused. Mount more repos under /data.
+      INGEST_ALLOWED_ROOTS: /data
     volumes:
       - ./:/data/codesage-agent:ro  # lets you ingest this repo itself as a demo
     ports:
