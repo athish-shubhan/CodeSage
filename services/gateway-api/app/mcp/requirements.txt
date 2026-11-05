@@ -4,4 +4,8 @@
 # main app's dependencies.
 mcp>=2.0.0
 grpcio==1.66.2
+# protobuf comes with grpcio-tools, not grpcio: without it the generated
+# retrieval_pb2 stubs fail to import (ModuleNotFoundError: google). Also
+# what generates those stubs: python -m grpc_tools.protoc (see server.py).
+grpcio-tools==1.66.2
 pydantic-settings==2.5.2

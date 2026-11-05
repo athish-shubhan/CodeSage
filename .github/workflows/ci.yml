@@ -136,6 +136,30 @@ jobs:
           [ -s "$RUNNER_TEMP/agent_eval.md" ] || exit 0
           cat "$RUNNER_TEMP/agent_eval.md" >> "$GITHUB_STEP_SUMMARY"
 
+  mcp-adapter:
+    # The MCP adapter has its own requirements file (mcp's starlette pin
+    # conflicts with the gateway's FastAPI), so it gets its own environment.
+    # Installing only that file is the point: it is how the adapter is run,
+    # and it was once missing protobuf, so the adapter could not import.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: services/gateway-api/app/mcp/requirements.txt
+      - name: Install dependencies
+        run: pip install -r services/gateway-api/app/mcp/requirements.txt $PYTEST
+      - name: Generate gRPC stubs
+        run: cd services/gateway-api && python -m grpc_tools.protoc -I proto --python_out=. --grpc_python_out=. proto/retrieval.proto
+      - name: Import and test the adapter
+        run: |
+          cd services/gateway-api
+          python -c "import app.mcp.server"
+          python -m pytest tests/test_mcp_server.py -q
+
   retrieval-smoke:
     # Blocking CI gate for the Context Engineer story: ingests a tiny fixed
     # fixture corpus into a real retrieval-service + Qdrant and asserts

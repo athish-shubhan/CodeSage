@@ -178,3 +178,48 @@ Branch `improve/round-4`, stacked on `improve/round-3` (athish-shubhan/CodeSage#
 
 - The `/chat` guard is not in `eval/agent_eval.py`'s cases; it is covered by gateway tests only.
 - The MCP adapter (`app/mcp/server.py`) still returns raw retrieved text to MCP clients; it runs in its own environment and was not changed.
+
+## Round 5: malformed LLM responses, /chat in the eval gate, a working MCP adapter
+
+Branch `improve/round-5`, stacked on `improve/round-4` (athish-shubhan/CodeSage#5).
+
+### 1. A 2xx response that was not a completion became an unhandled 500
+
+**Found:** `complete_with_tools` indexed `resp.json()["choices"][0]["message"]` and `stream_chat` ran `json.loads` on every chunk, so a backend answering 200 with `{"choices": []}`, `{"error": "model not loaded"}`, or an HTML error page raised `IndexError`/`KeyError`/`JSONDecodeError`. The routers only map `httpx.HTTPError`, so all three reproduced as 500 on `/agent`. An `{"error": ...}` chunk mid-stream was silently skipped, which truncated the answer without saying so.
+
+**Changed:** both paths raise `MalformedLLMResponse`, a subclass of `httpx.HTTPError`, so every existing handler maps it to 502 with `LLM backend unavailable (malformed response)` (the body goes to the server log).
+
+**Verified:** 6 new tests (four bodies on `/agent`, two stream chunks on `/chat`); all six fail on the old code.
+
+### 2. The `/chat` guard was not in the CI eval gate
+
+**Found:** Round 4 added the injection guard and citation checks to `/chat` but left them out of `eval/agent_eval.py`, so the `agent-eval` gate only covered `/agent`.
+
+**Changed:** cases can set `"path": "chat"`; they run the real `/chat` handler with fixture-backed retrieval and a scripted (replay) or real (live) LLM stream, and are scored the same way. Two cases added: the injected `payments.py` chunk, and an answer citing a file it was never shown.
+
+**Verified:** replay now passes 45/45 label checks (was 36/36) across 11 cases; injection cases 4/4 stripped, flagged at the right lines, and uncitable. A new test shows the `/chat` case fails with sanitizing disabled. Replay answer rates moved because two scripted answers were added (grounded-citation rate 0.56 over 16 citations, unsupported-identifier rate 0.26 over 19 identifiers, abstention accuracy 0.91 over 11 cases); as before, those rates describe the scripts, not a model.
+
+### 3. The MCP adapter could not start from its own requirements file
+
+**Found:** `app/mcp/requirements.txt` lists `grpcio` but not `protobuf`, which the generated stubs import; in the main environment it only arrives through `grpcio-tools`. Reproduced in a fresh venv with exactly that file: `import app.mcp.server` failed with `ModuleNotFoundError: No module named 'google'`, on the unmodified adapter. Separately, the adapter returned raw repository text to the MCP client's model and passed `top_k` and `extra_lines` through unbounded.
+
+**Changed:** `grpcio-tools==1.66.2` (the main service's pin, which brings protobuf and generates the stubs) added to the adapter's requirements, and the stub-generation step added to its run instructions. Results are sanitized and delimited like the agent's tool results; `top_k` is clamped to 1-15 and `extra_lines` to 1-200, the agent's own tool bounds. New CI job `mcp-adapter` installs only the adapter's requirements file, imports the adapter, and runs its tests.
+
+**Verified:** 3 new tests, run in a fresh venv built from the requirements file with the CI job's exact steps; they fail on the old adapter. In the gateway's own environment the file is skipped (`mcp` is not installed there).
+
+### Results
+
+| Suite | Before (round 4) | After |
+|---|---|---|
+| gateway-api | 108 | 114 passed, 1 skipped (MCP tests; run by `mcp-adapter`) |
+| mcp-adapter (own venv) | could not import | 3 passed |
+| retrieval-service | 67 | 67 passed |
+| integration | 5 | 5 passed |
+| eval | 29 | 31 passed |
+| agent eval gate | 36/36 | 45/45 (detector 0.90 / 0.78 unchanged) |
+| ruff 0.14.0 | clean | clean |
+
+### Not done
+
+- `mcp>=2.0.0` is still unpinned in the adapter's requirements, as the original authors chose; CI installs whatever is newest (2.3.0 here).
+- The live column of the eval report still has not been run.

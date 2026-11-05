@@ -95,7 +95,12 @@ def test_live_mode_uses_the_real_llm_client_and_skips_labels():
     async def fake_llm(messages, tools=None, model=None):
         return {"role": "assistant", "content": "I could not find that in the code."}
 
-    with patch("app.llm_client.complete_with_tools", new=fake_llm):
+    async def fake_stream(prompt):
+        yield "I could not find that in the code."
+
+    with patch("app.llm_client.complete_with_tools", new=fake_llm), patch(
+        "app.llm_client.stream_chat", new=fake_stream
+    ):
         summary = asyncio.run(evaluate(live=True))
     assert summary["mode"] == "live"
     assert summary["label_checks"] == {"passed": 0, "total": 0}
@@ -112,3 +117,16 @@ def test_report_section_is_replaced_in_place(tmp_path):
     write_section(report, f"{REPORT_START}\nv1\n{REPORT_END}")
     write_section(report, f"{REPORT_START}\nv2\n{REPORT_END}")
     assert report.read_text() == f"# Retrieval\n\ntable\n\n{REPORT_START}\nv2\n{REPORT_END}\n"
+
+
+def test_chat_path_eval_fails_when_the_guard_is_off():
+    case = CASES["chat-injection"]
+    assert case["path"] == "chat"
+    with patch("app.agent.untrusted.sanitize", new=lambda text: (text, [])):
+        result = asyncio.run(run_case(case, FixtureRepo()))
+    checks = dict(label_checks(case, result))
+    assert checks["injection_stripped"] is False and checks["citations"] is False
+
+
+def test_both_request_paths_are_covered():
+    assert {c.get("path", "agent") for c in CASES.values()} == {"agent", "chat"}

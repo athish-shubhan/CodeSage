@@ -56,3 +56,50 @@ def test_stream_chat_skips_chunks_with_no_choices():
 
     with patch("app.llm_client.httpx.AsyncClient", new=_sse_client(lines)):
         assert asyncio.run(collect()) == ["Hel", "lo"]
+
+
+def _client_returning(body, status=200):
+    import httpx
+
+    transport = httpx.MockTransport(lambda request: httpx.Response(status, content=body))
+    real = httpx.AsyncClient
+    return lambda **kw: real(transport=transport, **kw)
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("body", [b'{"choices": []}', b'{"error": "model not loaded"}', b"<html>bad gateway</html>", b"[1]"])
+def test_agent_maps_a_malformed_completion_to_502(body):
+    from unittest.mock import patch
+
+    from fastapi.testclient import TestClient
+
+    from app.auth import create_access_token
+    from app.main import app
+
+    with patch("app.llm_client.httpx.AsyncClient", new=_client_returning(body)):
+        resp = TestClient(app, raise_server_exceptions=False).post(
+            "/agent", headers={"Authorization": f"Bearer {create_access_token('admin')}"}, json={"task": "hi"}
+        )
+    assert resp.status_code == 502
+    assert resp.json()["detail"] == "LLM backend unavailable (malformed response)"
+
+
+@pytest.mark.parametrize("line", ["data: <html>oops</html>", 'data: {"error": {"message": "context length exceeded"}}'])
+def test_chat_maps_a_malformed_stream_chunk_to_502(line):
+    from unittest.mock import AsyncMock, patch
+
+    from fastapi.testclient import TestClient
+
+    from app.auth import create_access_token
+    from app.main import app
+
+    with patch("app.llm_client.httpx.AsyncClient", new=_sse_client([line])), patch(
+        "app.routers.chat.rag_client.search", new=AsyncMock(return_value=[])
+    ):
+        resp = TestClient(app, raise_server_exceptions=False).post(
+            "/chat", headers={"Authorization": f"Bearer {create_access_token('admin')}"}, json={"question": "hi"}
+        )
+    assert resp.status_code == 502
+    assert resp.json()["detail"] == "LLM backend unavailable (malformed response)"
