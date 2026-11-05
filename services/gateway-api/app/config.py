@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     # below this. 0 disables it (the default); pick a value with eval/abstention.py.
     retrieval_min_score: float = 0.0
 
+    # Longest question or agent task accepted, in characters (~4 chars per
+    # token). Bounds what one request can make the gateway send to the LLM.
+    max_question_chars: int = 16_000
+
     # Append one JSON line per /agent run to this file (see app/agent/audit.py).
     # Empty (the default) disables the audit log.
     agent_audit_log: str = ""

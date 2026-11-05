@@ -122,7 +122,7 @@ Ollama serves a quantized model (`llama3.1:8b-instruct-q4_0` by default) so the 
 
 ## Auth
 
-JWT, issued by `POST /token` against demo credentials. Swap for a real user store before this handles real users. REST calls send it as a Bearer header; the WebSocket sends it as a `?token=` query parameter, since browser WebSocket clients cannot set custom headers on the handshake. The token is checked again on every message, so a long-lived socket is closed (1008) once its token expires instead of staying authorized. A malformed frame (not JSON, not an object, no non-empty `question`) gets an `error` frame back and the socket stays open; it used to raise and drop the connection.
+JWT, issued by `POST /token` against demo credentials. Swap for a real user store before this handles real users. At startup the gateway logs a warning for each setting still at its shipped value (`GATEWAY_JWT_SECRET`, and the `admin`/`admin` demo login), since anyone who reads this repo knows them. Requests are size-bounded before anything is sent downstream: a question or agent task over `GATEWAY_MAX_QUESTION_CHARS` (16,000 by default) or a `top_k` outside 1-50 is rejected with 422 (an error frame on the WebSocket). REST calls send it as a Bearer header; the WebSocket sends it as a `?token=` query parameter, since browser WebSocket clients cannot set custom headers on the handshake. The token is checked again on every message, so a long-lived socket is closed (1008) once its token expires instead of staying authorized. A malformed frame (not JSON, not an object, no non-empty `question`) gets an `error` frame back and the socket stays open; it used to raise and drop the connection.
 
 ## Observability
 

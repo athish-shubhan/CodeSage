@@ -2,16 +2,17 @@ from dataclasses import asdict
 
 import httpx
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.agent.loop import run_agent
 from app.auth import current_user
+from app.config import settings
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
 
 class AgentRequest(BaseModel):
-    task: str
+    task: str = Field(max_length=settings.max_question_chars)
 
 
 class UnsupportedIdentifier(BaseModel):
