@@ -134,7 +134,7 @@ JWT, issued by `POST /token` against demo credentials. Swap for a real user stor
 
 Tracing is deliberately not OpenTelemetry or Jaeger yet (`docs/adr/0005-in-process-tracing-not-opentelemetry.md`). There is one consumer of trace data (the debug trace and the eval harness), and the OpenTelemetry GenAI conventions are still marked Development. The in-process `Trace` object in `retrieval-service/tracing.py` answers "what happened and how long did it take" per request; Prometheus answers "how often" in aggregate. If this runs with several teams debugging across services, that calculation changes.
 
-The gateway's gRPC client keeps one channel per process with keepalive and retries `UNAVAILABLE` up to 3 attempts with backoff (`app/rag_client.py`, `docs/adr/0001-grpc-between-gateway-and-retrieval.md`). That is only safe because every RPC is idempotent. The LLM client has a 120 s read timeout between streamed chunks; it previously had no timeout at all on the streaming path.
+The gateway's gRPC client keeps one channel per process with keepalive and retries `UNAVAILABLE` up to 3 attempts with backoff (`app/rag_client.py`, `docs/adr/0001-grpc-between-gateway-and-retrieval.md`). That is only safe because every RPC is idempotent. The LLM client has a 120 s read timeout between streamed chunks; it previously had no timeout at all on the streaming path. A backend that answers 2xx with something other than an OpenAI-style completion (no `choices`, an `error` object, an HTML error page, a non-JSON stream chunk) raises `MalformedLLMResponse`, an `httpx.HTTPError`, so `/chat`, `/ws/chat`, and `/agent` answer 502 `LLM backend unavailable (malformed response)` instead of an unhandled 500.
 
 ## Replicas and state
 

@@ -47,6 +47,20 @@ def build_prompt(question: str, context_chunks: list[dict]) -> str:
     return f"# Retrieved context\n{context}\n\n# Question\n{question}"
 
 
+class MalformedLLMResponse(httpx.HTTPError):
+    """The backend answered 2xx with a body that is not an OpenAI-style
+    completion (no choices, an error object, an HTML error page). An
+    httpx.HTTPError, so every caller's existing handling turns it into a 502
+    instead of an unhandled 500."""
+
+
+def _parse_json(text: str) -> object:
+    try:
+        return json.loads(text)
+    except ValueError as exc:
+        raise MalformedLLMResponse(f"LLM backend sent non-JSON: {text[:200]!r}") from exc
+
+
 # No overall timeout on streaming (a long answer legitimately takes a while),
 # but a read timeout between chunks, so a hung backend fails the request
 # instead of holding it open forever.
@@ -76,7 +90,9 @@ async def stream_chat(user_prompt: str) -> AsyncIterator[str]:
                 data = line.removeprefix("data: ").strip()
                 if data == "[DONE]":
                     break
-                chunk = json.loads(data)
+                chunk = _parse_json(data)
+                if not isinstance(chunk, dict) or "error" in chunk:
+                    raise MalformedLLMResponse(f"LLM backend sent an unexpected stream chunk: {data[:200]!r}")
                 # Usage-only chunks (OpenAI-style include_usage, sent by some
                 # vLLM/llama.cpp builds) carry "choices": [] and no text.
                 choices = chunk.get("choices") or [{}]
@@ -99,7 +115,14 @@ async def complete_with_tools(messages: list[dict], tools: list[dict] | None = N
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(url, json=payload, headers=_headers())
         resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]
+        body = _parse_json(resp.text)
+        try:
+            message = body["choices"][0]["message"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise MalformedLLMResponse(f"LLM backend sent no completion: {resp.text[:200]!r}") from exc
+        if not isinstance(message, dict):
+            raise MalformedLLMResponse(f"LLM backend sent no completion: {resp.text[:200]!r}")
+        return message
 
 
 async def health() -> bool:

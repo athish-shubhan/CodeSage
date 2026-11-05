@@ -178,3 +178,15 @@ Branch `improve/round-4`, stacked on `improve/round-3` (athish-shubhan/CodeSage#
 
 - The `/chat` guard is not in `eval/agent_eval.py`'s cases; it is covered by gateway tests only.
 - The MCP adapter (`app/mcp/server.py`) still returns raw retrieved text to MCP clients; it runs in its own environment and was not changed.
+
+## Round 5: malformed LLM responses, /chat in the eval gate, a working MCP adapter
+
+Branch `improve/round-5`, stacked on `improve/round-4` (athish-shubhan/CodeSage#5).
+
+### 1. A 2xx response that was not a completion became an unhandled 500
+
+**Found:** `complete_with_tools` indexed `resp.json()["choices"][0]["message"]` and `stream_chat` ran `json.loads` on every chunk, so a backend answering 200 with `{"choices": []}`, `{"error": "model not loaded"}`, or an HTML error page raised `IndexError`/`KeyError`/`JSONDecodeError`. The routers only map `httpx.HTTPError`, so all three reproduced as 500 on `/agent`. An `{"error": ...}` chunk mid-stream was silently skipped, which truncated the answer without saying so.
+
+**Changed:** both paths raise `MalformedLLMResponse`, a subclass of `httpx.HTTPError`, so every existing handler maps it to 502 with `LLM backend unavailable (malformed response)` (the body goes to the server log).
+
+**Verified:** 6 new tests (four bodies on `/agent`, two stream chunks on `/chat`); all six fail on the old code.
