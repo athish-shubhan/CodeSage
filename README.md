@@ -73,7 +73,7 @@ Each of these is a short record of the options, what was chosen, and what it cos
 | Re-ingesting an unchanged repo (105 files, 353 chunks) | 0 chunks embedded (previously all 353, written as a duplicate copy of every point) | `scripts/bench_ingest.py`, ADR 0004 |
 | Re-ingesting after editing one file (README.md) | 3 chunks embedded | `scripts/bench_ingest.py` |
 | gRPC call overhead, new channel per call vs shared (loopback, 1000 calls) | p50 0.57 ms to 0.24 ms, p99 0.77 ms to 0.29 ms | `scripts/bench_grpc_channel.py` |
-| Agent injection guard on 43 labeled sentences | catches 18 of 23 injections, flags 2 of 20 benign sentences; 1 flag in 45 ordinary code/doc files (a README sentence describing this feature). Model behaviour (grounded-citation rate, abstention) not yet measured live | `eval/agent_eval.py`, ADR 0006 |
+| Agent injection guard on 43 labeled sentences | catches 18 of 23 injections, flags 2 of 20 benign sentences; 1 flag in 46 ordinary code/doc files (a README sentence describing this feature). Model behaviour (grounded-citation rate, abstention) not yet measured live | `eval/agent_eval.py`, ADR 0006 |
 
 ## Tests and evaluation
 

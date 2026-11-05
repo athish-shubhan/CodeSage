@@ -44,8 +44,10 @@ Everything also runs as a single `docker-compose up` on one machine for local de
 
 ## Request paths
 
-- `POST /chat`: retrieve chunks via gRPC, build a prompt, call the LLM, return `{answer, sources}` in one response.
-- `WS /ws/chat`: the same retrieval step, but the answer streams token by token.
+- `POST /chat`: retrieve chunks via gRPC, build a prompt, call the LLM, return `{answer, sources, citations, injection_flags}` in one response.
+- `WS /ws/chat`: the same retrieval step, but the answer streams token by token; the `sources` frame carries `injection_flags` and the `done` frame carries `citations`.
+- Both chat paths apply the agent layer's untrusted-data handling (`app/chat_guard.py`): retrieved chunks are sanitized by `untrusted.sanitize` before they enter the prompt, the context block is wrapped in the same `<<untrusted ...>>` delimiters with a matching system-prompt rule, and the answer's citations and identifiers are checked against the chunks the model was shown (`chat_injection_flags_total`, `chat_citations_total`). `sources` in the response is still the unmodified retrieval result.
+- Errors from retrieval or the LLM reach the client as a category only (`retrieval-service unavailable (UNAVAILABLE)`, `LLM backend unavailable (HTTP 500)`); the full error, which can contain internal addresses, goes to the gateway log (`app/errors.py`).
 - `POST /agent`: a bounded, multi-step tool-calling loop instead of a single retrieve-then-answer pass. See "Agent layer" below.
 - gRPC to `retrieval-service`: internal only, never exposed publicly. A typed contract (`proto/retrieval.proto`) over a low-latency internal boundary.
 

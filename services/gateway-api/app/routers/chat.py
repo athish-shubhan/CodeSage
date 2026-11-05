@@ -1,8 +1,10 @@
+from dataclasses import asdict
+
 import grpc
 import httpx
 from fastapi import APIRouter, Depends
 
-from app import rag_client
+from app import chat_guard, rag_client
 from app.auth import current_user
 from app.errors import downstream_http_exception
 from app.llm_client import build_prompt, stream_chat
@@ -16,8 +18,14 @@ async def chat(req: ChatRequest, user: str = Depends(current_user)) -> ChatRespo
     """Non-streaming REST endpoint: retrieve context, then generate a full answer."""
     try:
         sources = await rag_client.search(req.question, top_k=req.top_k, collection=req.collection)
-        prompt = build_prompt(req.question, sources)
+        clean, flags = chat_guard.sanitize_sources(sources)
+        prompt = build_prompt(req.question, clean)
         answer = "".join([token async for token in stream_chat(prompt)])
     except (grpc.aio.AioRpcError, httpx.HTTPError) as exc:
         raise downstream_http_exception(exc) from exc
-    return ChatResponse(answer=answer, sources=sources)
+    return ChatResponse(
+        answer=answer,
+        sources=sources,
+        citations=chat_guard.check_answer(answer, clean, flags),
+        injection_flags=[asdict(f) for f in flags],
+    )
