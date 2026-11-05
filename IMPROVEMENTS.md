@@ -45,3 +45,15 @@ Branch `improve/round-1`, stacked on `reliability-layer` (athish-shubhan/CodeSag
 
 - The `retrieval-smoke` job (real embedder) cannot run in this environment; CI runs it.
 - A symlink's target is only checked at ingest and read time; a link that is retargeted between the two is checked again at read time, but an already-indexed chunk keeps its old content until the next ingest.
+
+## Round 2: batched ingest, request bounds and insecure-default warnings, bounded metric labels
+
+Branch `improve/round-2`, stacked on `improve/round-1` (athish-shubhan/CodeSage#2).
+
+### 1. Ingest sent every new chunk to Qdrant in one request
+
+**Found:** `pipeline.ingest` embedded all new chunks at once and upserted them in a single request. Measured on this repo's own chunks (504 chunks from 116 files, with 384-d vectors as all-MiniLM-L6-v2 produces): a point averages 8,862 bytes of JSON, so the whole ingest was one 4.5 MB request, and Qdrant's default 32 MB request limit (`service.max_request_size_mb`) would be passed at about 3,800 chunks, roughly 870 files at this repo's density. Not reproduced against a Qdrant server here (none available); the limit is Qdrant's documented default.
+
+**Changed:** chunks are embedded and upserted in batches of about 256 points (~2.3 MB), never splitting a file across batches. That last part matters: with naive slicing, an ingest that dies between batches leaves a file half-written but already carrying its new hash, so the next ingest thinks it is unchanged and never writes the missing chunks.
+
+**Verified:** 3 new tests against embedded Qdrant: batch sizes and file-to-batch assignment, an oversized single file staying in one batch, and an ingest that crashes on its second batch being fully repaired by the next one. The two ingest tests fail against a naive slicing batcher and pass with the file-aligned one.
