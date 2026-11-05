@@ -285,3 +285,15 @@ There is no Docker daemon in this environment, so neither change could be run he
 
 - `readOnlyRootFilesystem` is not set: retrieval-service needs a writable home for the model cache, which would need an `emptyDir` or a pre-downloaded model in the image.
 - Compose does not set `user:`; it relies on the image's `USER`.
+
+## Round 8: read-only root filesystems, a pinned MCP dependency
+
+Branch `improve/round-8`, from `master` after rounds 1-7 merged.
+
+### 1. Containers could write anywhere in their own filesystem
+
+**Found:** left open in round 7. Both services run as uid 10001 but with a writable root filesystem, so anything that gets code execution in either container can modify the installed application and its dependencies. Neither service needs that: the gateway writes nothing, and retrieval-service writes only the embedding model download under `~/.cache`.
+
+**Changed:** the k8s Deployments set `readOnlyRootFilesystem: true` with an `emptyDir` at `/tmp` for both and one at `/home/app/.cache` (1 GiB) for retrieval-service. Compose (main and edge) uses `read_only: true`, a tmpfs `/tmp`, and a named `model-cache` volume, which also means the model is no longer downloaded again after every container restart. The retrieval image creates `/home/app/.cache` as uid 10001: a named volume mounted where the image has no directory comes up owned by root, and the model download would fail.
+
+**Verified in CI** (no Docker daemon here): `build-images` now starts each image with `--read-only --tmpfs /tmp` (plus the model-cache volume for retrieval-service), waits for its health endpoint, and checks that writing under `/app` fails and, for retrieval-service, that writing to the cache volume succeeds. The result is recorded in the PR. The k8s files were checked to parse; they have not been applied to a cluster.

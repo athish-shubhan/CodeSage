@@ -17,6 +17,8 @@ services:
 
   gateway-api:
     build: ./services/gateway-api
+    read_only: true  # runs as uid 10001 and writes nothing outside /tmp
+    tmpfs: [/tmp]
     environment:
       GATEWAY_LLM_BACKEND: ${LLM_BACKEND:-ollama}
       GATEWAY_LLM_BASE_URL: ${LLM_BASE_URL:-http://ollama:11434/v1}
@@ -50,6 +52,8 @@ services:
 
   retrieval-service:
     build: ./services/retrieval-service
+    read_only: true  # the model cache volume below is the only path it writes
+    tmpfs: [/tmp]
     environment:
       QDRANT_URL: http://qdrant:6333
       EMBEDDING_DEVICE: cpu
@@ -62,6 +66,7 @@ services:
       INGEST_ALLOWED_ROOTS: /data
     volumes:
       - ./:/data/codesage-agent:ro  # lets you ingest this repo itself as a demo
+      - model-cache:/home/app/.cache  # embedding model download, kept across restarts
     ports:
       - "50051:50051"  # gRPC, published for the eval/ CLI tools; not for public exposure
     depends_on:
@@ -144,6 +149,7 @@ services:
         limits: { cpus: "0.5", memory: 256M }
 
 volumes:
+  model-cache:
   qdrant-data:
   ollama-data:
   prometheus-data:

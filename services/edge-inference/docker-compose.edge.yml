@@ -37,8 +37,11 @@ services:
     ports:
       - "50051:50051"
       - "9101:9101"
+    read_only: true  # the model cache volume below is the only path it writes
+    tmpfs: [/tmp]
     volumes:
       - ../../:/data/codesage-agent:ro
+      - model-cache:/home/app/.cache
     deploy:
       resources:
         reservations:
@@ -57,5 +60,6 @@ services:
       - "6333:6333"
 
 volumes:
+  model-cache:
   ollama-data:
   qdrant-data:
