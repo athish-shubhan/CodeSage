@@ -11,6 +11,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from app import rag_client
+from app.agent.citations import truncation_notice
 
 MAX_FILE_BYTES = 20_000
 
@@ -47,8 +48,11 @@ async def get_file(args: GetFileArgs) -> str:
     result = await rag_client.get_file(args.source_path, MAX_FILE_BYTES)
     if result is None:
         return f"File not found: {args.source_path}"
-    suffix = "\n... (truncated)" if result["truncated"] else ""
-    return result["text"] + suffix
+    if not result["truncated"]:
+        return result["text"]
+    # Say where the cut is, so the model can expand_context past it and the
+    # citation check counts only the lines it was actually shown.
+    return result["text"] + truncation_notice(result["text"].count("\n") + 1)
 
 
 _REGISTRY: dict[str, tuple[type[BaseModel], object]] = {
