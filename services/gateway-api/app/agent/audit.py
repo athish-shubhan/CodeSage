@@ -47,6 +47,7 @@ def entry(state: AgentState, model: str, duration_s: float, error: str | None = 
             "unsupported_identifiers": state.unsupported_identifiers,
         },
         "injection_flags": [asdict(f) for f in state.injection_flags],
+        "repairs": state.repairs,
     }
 
 

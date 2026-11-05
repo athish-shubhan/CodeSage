@@ -130,3 +130,12 @@ def test_chat_path_eval_fails_when_the_guard_is_off():
 
 def test_both_request_paths_are_covered():
     assert {c.get("path", "agent") for c in CASES.values()} == {"agent", "chat"}
+
+
+def test_repair_case_depends_on_the_repair_turn():
+    case = CASES["repair-invented-name"]
+    fixed = asyncio.run(run_case(case, FixtureRepo()))
+    unrepaired = asyncio.run(run_case({**case, "repair": False}, FixtureRepo()))
+    assert fixed["repairs"] == 1 and all(ok for _, ok in label_checks(case, fixed))
+    assert unrepaired["repairs"] == 0 and unrepaired["ungrounded"] == ["vector_ops.py:1-8"]
+    assert dict(label_checks(case, unrepaired))["citations"] is False

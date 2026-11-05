@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     # token). Bounds what one request can make the gateway send to the LLM.
     max_question_chars: int = 16_000
 
+    # When the agent's final answer has ungrounded citations or unsupported
+    # identifiers, give it one more turn that lists them (app/agent/loop.py).
+    # Off by default: it costs an extra LLM round-trip on those answers.
+    agent_repair_citations: bool = False
+
     # Append one JSON line per /agent run to this file (see app/agent/audit.py).
     # Empty (the default) disables the audit log.
     agent_audit_log: str = ""

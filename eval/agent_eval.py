@@ -44,6 +44,7 @@ sys.path.insert(0, str(ROOT / "services" / "gateway-api"))
 from app import rag_client  # noqa: E402
 from app.agent import citations, untrusted  # noqa: E402
 from app.agent.loop import run_agent  # noqa: E402
+from app.config import settings  # noqa: E402
 
 FIXTURE_REPO = EVAL_DIR / "fixture" / "repo"
 CASES_PATH = EVAL_DIR / "agent_cases.jsonl"
@@ -175,9 +176,10 @@ async def _run_agent_path(case: dict, repo: FixtureRepo, live: bool) -> dict:
         rag_client, "search", new=repo.search
     ), patch.object(rag_client, "expand_context", new=repo.expand_context), patch.object(
         rag_client, "get_file", new=repo.get_file
-    ):
+    ), patch.object(settings, "agent_repair_citations", bool(case.get("repair"))):
         state = await run_agent(case["task"])
     return {
+        "repairs": state.repairs,
         "answer": state.answer or "",
         "stopped_reason": state.stopped_reason,
         "tools": [tc.name for tc in state.tool_calls],
@@ -241,6 +243,7 @@ async def run_case(case: dict, repo: FixtureRepo, live: bool = False) -> dict:
         "abstained": abstained(answer, out["stopped_reason"]),
         "answerable": case.get("answerable"),
         "flagged_lines": sorted(flagged),
+        "repairs": out.get("repairs", 0),
     }
     inj = case.get("expect", {}).get("injection")
     if inj:
@@ -268,6 +271,8 @@ def label_checks(case: dict, result: dict) -> list[tuple[str, bool]]:
         ("unsupported_identifiers", sorted(result["unsupported"]) == sorted(exp["unsupported"])),
         ("abstention", result["abstained"] == exp["abstained"]),
     ]
+    if "repairs" in exp:
+        checks.append(("repairs", result["repairs"] == exp["repairs"]))
     if "injection" in result:
         inj = result["injection"]
         checks += [

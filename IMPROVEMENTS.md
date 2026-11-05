@@ -326,3 +326,11 @@ Branch `improve/round-9`, stacked on `improve/round-8` (athish-shubhan/CodeSage#
 **Added:** the same run streamed as `step`, `tool_call` (name, arguments), `tool_result` (size, injection-guard removals) and `repair` events while it works, then one `answer` event with the full response (citations, flags, request id) or one `error` event (same categories as the REST errors). The loop takes an optional event callback, so `POST /agent` is unchanged. A client that disconnects cancels the run, so it stops spending LLM and tool calls nobody will read.
 
 **Verified:** 4 tests: the event sequence and final answer for a run that reads the injected fixture file, an error event for a malformed LLM response, auth required, and cancellation of a hung LLM call when the stream is closed.
+
+### 2. Citation repair (opt-in, `GATEWAY_AGENT_REPAIR_CITATIONS`)
+
+**Why:** rounds 0-6 made the gateway good at detecting ungrounded citations and invented names, but only reported them. The agent can use that verdict to fix its own answer.
+
+**Added:** when a final answer fails the checks, the loop sends one more turn listing exactly which citations point at nothing a tool returned and which names are not in the cited text, and asks the model to revise, check with the tools, or say what it could not verify. At most one repair per run, only if a step is left, and the revision is checked and returned whatever it says. Exposed as `repairs` in the response and audit log, and `agent_citation_repairs_total{resolved}`. Off by default: it adds an LLM round-trip to failing answers, and `/agent` behaves exactly as before unless enabled.
+
+**Verified:** 6 tests (feedback content, the repaired answer's verdict, off by default, passing answers not sent back, one repair at most, no repair without a step left) and a new eval case: replay passes 49/49 label checks (was 45/45), and the repair case fails with repair disabled. Whether repair helps a real model is not measured; `eval/agent_eval.py --live` runs that case against one.

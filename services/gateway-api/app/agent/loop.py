@@ -26,8 +26,10 @@ from app.agent import audit, citations, untrusted
 from app.agent.model_router import pick_model
 from app.agent.state import AgentState, InjectionFlag, ToolCallRecord
 from app.agent.tools import TOOL_NAMES, TOOL_SCHEMAS, call_tool
+from app.config import settings
 from app.llm_client import complete_with_tools
 from app.metrics import (
+    AGENT_CITATION_REPAIRS,
     AGENT_CITATIONS,
     AGENT_INJECTION_FLAGS,
     AGENT_STEPS,
@@ -51,9 +53,10 @@ SYSTEM_PROMPT = (
 MAX_STEPS = 4
 MAX_TOOL_CALLS = 6
 TIMEOUT_S = 60
+MAX_REPAIRS = 1
 
 # Progress events for POST /agent/stream (app/routers/agent.py): step,
-# tool_call, tool_result. A callback, so the plain /agent path pays nothing.
+# tool_call, tool_result, repair. A callback, so the plain /agent path pays nothing.
 EventSink = Callable[[dict], Awaitable[None]]
 
 
@@ -78,16 +81,50 @@ async def _invoke(name: str, args: dict | None) -> str:
     return await call_tool(name, args)
 
 
+def _verdict(state: AgentState, answer: str) -> tuple[dict, list[dict]]:
+    return (
+        citations.check(answer, state.tool_calls, citations.removed_lines(state.injection_flags)),
+        citations.unsupported_identifiers(answer, state.tool_calls),
+    )
+
+
+def repair_prompt(verdict: dict, unsupported: list[dict]) -> str:
+    """The feedback turn: exactly what failed, and what the model may do about it."""
+    parts = ["Gateway citation check on your answer, before it is shown to the user:"]
+    if verdict["ungrounded"]:
+        cited = " ".join(f"[{c}]" for c in verdict["ungrounded"])
+        parts.append(f"these citations do not point at anything a tool returned in this conversation: {cited}.")
+    if unsupported:
+        names = ", ".join(f"`{u['identifier']}` (cited as {' '.join(f'[{c}]' for c in u['citations'])})" for u in unsupported)
+        parts.append(f"these names do not appear in the text you cited for them: {names}.")
+    parts.append(
+        "Revise the answer: cite only ranges the tools returned, use the tools again if you need to check "
+        "something, and say plainly what you could not verify instead of guessing."
+    )
+    return " ".join(parts)
+
+
 def _finish(state: AgentState, reason: str, answer: str, done: bool = False) -> AgentState:
     state.stopped_reason, state.answer, state.done = reason, answer, done
-    state.citations = citations.check(answer, state.tool_calls, citations.removed_lines(state.injection_flags))
-    state.unsupported_identifiers = citations.unsupported_identifiers(answer, state.tool_calls)
+    state.citations, state.unsupported_identifiers = _verdict(state, answer)
+    if state.repairs:
+        resolved = not state.citations["ungrounded"] and not state.unsupported_identifiers
+        AGENT_CITATION_REPAIRS.labels(resolved=str(resolved).lower()).inc()
     AGENT_STEPS.observe(state.steps)
     AGENT_STOP_REASON.labels(reason=reason).inc()
     AGENT_CITATIONS.labels(grounded="true").inc(len(state.citations["grounded"]))
     AGENT_CITATIONS.labels(grounded="false").inc(len(state.citations["ungrounded"]))
     AGENT_UNSUPPORTED_IDENTIFIERS.inc(len(state.unsupported_identifiers))
     return state
+
+
+def _should_repair(state: AgentState, answer: str) -> bool:
+    """One more turn is worth it only when it is enabled, unused, there is a
+    step left to spend on it, and the answer actually failed a check."""
+    if not settings.agent_repair_citations or state.repairs >= MAX_REPAIRS or state.steps >= MAX_STEPS:
+        return False
+    verdict, unsupported = _verdict(state, answer)
+    return bool(verdict["ungrounded"] or unsupported)
 
 
 def _sanitize(state: AgentState, name: str, args: dict, result: str) -> str:
@@ -170,7 +207,20 @@ async def _run(state: AgentState, model: str, emit: EventSink = _no_events) -> A
 
                 tool_calls = message.get("tool_calls") or []
                 if not tool_calls:
-                    return _finish(state, "done", message.get("content") or "", done=True)
+                    answer = message.get("content") or ""
+                    if _should_repair(state, answer):
+                        verdict, unsupported = _verdict(state, answer)
+                        state.repairs += 1
+                        await emit(
+                            {
+                                "type": "repair",
+                                "ungrounded": verdict["ungrounded"],
+                                "unsupported": [u["identifier"] for u in unsupported],
+                            }
+                        )
+                        state.messages.append({"role": "user", "content": repair_prompt(verdict, unsupported)})
+                        continue
+                    return _finish(state, "done", answer, done=True)
                 await _run_tools(state, tool_calls, emit)
     except TimeoutError:
         return _finish(state, "timeout", "I ran out of time gathering information for this task.")

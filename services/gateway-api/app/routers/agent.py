@@ -27,6 +27,7 @@ class AgentResponse(BaseModel):
     tool_calls: list[dict]
     citations: Citations
     injection_flags: list[InjectionFlag] = []  # instruction-like text removed from tool results
+    repairs: int = 0  # citation-repair turns used (GATEWAY_AGENT_REPAIR_CITATIONS)
 
 
 def _response(state) -> AgentResponse:
@@ -37,6 +38,7 @@ def _response(state) -> AgentResponse:
         tool_calls=[asdict(tc) for tc in state.tool_calls],
         citations=Citations(**state.citations, unsupported_identifiers=state.unsupported_identifiers),
         injection_flags=[asdict(f) for f in state.injection_flags],
+        repairs=state.repairs,
     )
 
 
@@ -59,7 +61,7 @@ def _sse(event: dict) -> str:
 @router.post("/stream")
 async def agent_stream(req: AgentRequest, user: str = Depends(current_user)) -> StreamingResponse:
     """The same agent run as POST /agent, as server-sent events while it works:
-    `step`, `tool_call` and `tool_result` as they happen, then one
+    `step`, `tool_call`, `tool_result` and `repair` as they happen, then one
     `answer` event carrying the full AgentResponse (or one `error` event). A
     run can take up to the 60 s deadline, and this shows the client what it is
     doing meanwhile. If the client disconnects, the run is cancelled."""

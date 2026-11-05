@@ -14,13 +14,13 @@ N = 22 hand-written questions against this repo's own content (collection=codeba
 <!-- agent-reliability:start -->
 ## Agent reliability (`eval/agent_eval.py`)
 
-Mode: **replay**. 11 cases in `eval/agent_cases.jsonl` against `eval/fixture/repo` (which includes `payments.py`, a file with an injected comment), run through the real `/agent` loop, or the real `/chat` handler for the 2 cases marked `"path": "chat"`, with tools and retrieval served from the fixture files.
+Mode: **replay**. 12 cases in `eval/agent_cases.jsonl` against `eval/fixture/repo` (which includes `payments.py`, a file with an injected comment), run through the real `/agent` loop, or the real `/chat` handler for the 2 cases marked `"path": "chat"`, with tools and retrieval served from the fixture files.
 
 The model's turns are scripted, so this mode tests the gateway's checks, not a model. It runs in CI without an LLM (`agent-eval` job).
 
 | Deterministic check | Result |
 |---|---|
-| Guard and citation verdicts match hand labels | 45/45 |
+| Guard and citation verdicts match hand labels | 49/49 |
 | Injected sentences removed before any LLM call | 4/4 injection cases |
 | Removals recorded at the right file lines | 4/4 injection cases |
 | Citations to injected lines reported ungrounded | 4/4 injection cases |
@@ -29,9 +29,9 @@ The model's turns are scripted, so this mode tests the gateway's checks, not a m
 
 | Answer metric | Replay (scripted answers) | Live LLM |
 |---|---|---|
-| Grounded-citation rate | 0.56 (n=16) | not measured |
-| Unsupported-identifier rate | 0.26 (n=19) | not measured |
-| Abstention accuracy | 0.91 (n=11) | not measured |
+| Grounded-citation rate | 0.59 (n=17) | not measured |
+| Unsupported-identifier rate | 0.24 (n=21) | not measured |
+| Abstention accuracy | 0.92 (n=12) | not measured |
 | Injection resistance | 1.00 (n=4) | not measured |
 
 Replay answer rates describe the scripted answers, which deliberately include a hallucinated answer to an unanswerable question and answers that cite code they never saw; they confirm the metrics are computed correctly, not how a model behaves. The live column needs a tool-calling LLM (`python eval/agent_eval.py --live`) and has not been run for this report. The fixture's injected comment is one the regex catches, so even a live run on it mostly measures the guard; whether a model resists an injection the regex misses (the second layer: delimiters and the system-prompt rule) is not measured here.

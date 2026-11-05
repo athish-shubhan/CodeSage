@@ -41,3 +41,4 @@ class AgentState:
     citations: dict = field(default_factory=dict)  # {"grounded": [...], "ungrounded": [...]}, see citations.py
     unsupported_identifiers: list[dict] = field(default_factory=list)  # see citations.unsupported_identifiers
     injection_flags: list[InjectionFlag] = field(default_factory=list)  # what untrusted.py removed, per tool result
+    repairs: int = 0  # citation-repair turns used (loop.py, GATEWAY_AGENT_REPAIR_CITATIONS)
