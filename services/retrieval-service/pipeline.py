@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -55,11 +56,26 @@ def _sha256(path: str) -> str:
     return h.hexdigest()
 
 
+def allowed_roots() -> list[str]:
+    """Directories IngestRepo may read, from INGEST_ALLOWED_ROOTS (separated
+    by os.pathsep). Unset or empty allows any path, the old behaviour; the
+    shipped compose and k8s configs set it to /data, where repos are mounted.
+    Without it, any token holder can ingest a host directory such as /etc and
+    then read its files back through search and get_file."""
+    raw = os.environ.get("INGEST_ALLOWED_ROOTS", "")
+    return [os.path.realpath(r) for r in raw.split(os.pathsep) if r.strip()]
+
+
 def ingest(collection: str, repo_path: str, include_globs: list[str] | None = None) -> IngestResult:
     """Incremental, idempotent ingest. Only files whose content hash changed
     since the last ingest are re-chunked and re-embedded; files that
     disappeared from the repo have their chunks deleted. Embedding is the
     expensive step, so an unchanged re-ingest does no embedding at all."""
+    # Checked before existence, so a refused path does not reveal whether it exists.
+    roots = allowed_roots()
+    real = os.path.realpath(repo_path)
+    if roots and not any(real == r or real.startswith(r + os.sep) for r in roots):
+        raise ValueError(f"repo_path is outside INGEST_ALLOWED_ROOTS: {repo_path!r}")
     # A missing directory would scan as empty and every indexed file would
     # look deleted, so a mistyped path would wipe the collection. Relative
     # paths resolve against this process's cwd, not the caller's.
@@ -99,8 +115,11 @@ def ingest(collection: str, repo_path: str, include_globs: list[str] | None = No
             vector_store.upsert(collection, embed([p["text"] for p in batch]), batch)
 
     # The lexical index is cheap to rebuild whole and must reflect deletes too.
+    # The new generation tells other replicas their index is now stale.
+    generation = uuid.uuid4().hex
+    vector_store.set_generation(collection, generation)
     all_chunks = vector_store.all_payloads(collection)
-    bm25_index.build_index(collection, all_chunks)
+    bm25_index.build_index(collection, all_chunks, generation)
     context_expand.set_repo_root(collection, repo_path)
 
     result = IngestResult(
@@ -139,18 +158,23 @@ def _file_batches(payloads: list[dict], size: int):
 
 def restore(collection: str) -> None:
     """Rebuilds the in-memory BM25 index and repo root for a collection from
-    Qdrant payloads. Needed after a restart: Qdrant persists, these don't,
-    and without this lexical search silently returns nothing and
-    expand_context/get_file fail until someone re-ingests."""
-    if bm25_index.has_index(collection):
+    Qdrant payloads when they are missing or stale. Needed after a restart
+    (Qdrant persists, these don't) and on a replica that did not run the
+    latest ingest: without it lexical search returns nothing, or chunks of
+    files that no longer exist, and expand_context/get_file fail.
+
+    Staleness is one point lookup: the generation the latest ingest wrote to
+    Qdrant against the one this replica's index was built from."""
+    current = vector_store.get_generation(collection)
+    if bm25_index.has_index(collection) and bm25_index.generation(collection) == current:
         return
     payloads = vector_store.all_payloads(collection)
     if not payloads:
         return
-    bm25_index.build_index(collection, payloads)
+    bm25_index.build_index(collection, payloads, current)
     if root := payloads[0].get("repo_root"):
         context_expand.set_repo_root(collection, root)
-    log.info("restored lexical index for %s (%d chunks)", collection, len(payloads))
+    log.info("rebuilt lexical index for %s (%d chunks, generation %s)", collection, len(payloads), current)
 
 
 def search(
@@ -183,7 +207,8 @@ def search(
     (docs/evaluation.md). Hybrid and reranking stay selectable for corpora
     where they measure better."""
     trace = Trace()
-    restore(collection)
+    if strategy in ("hybrid", "lexical"):  # dense-only search never reads the lexical index
+        restore(collection)
 
     with trace.step("classify") as meta:
         lex_weight = lexical_weight(query)

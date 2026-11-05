@@ -22,6 +22,8 @@ spec:
               value: "http://qdrant:6333"
             - name: OMP_NUM_THREADS  # match the CPU limit; torch otherwise uses every core on the node
               value: "2"
+            - name: INGEST_ALLOWED_ROOTS  # IngestRepo refuses paths outside this; mount repos under /data
+              value: "/data"
           resources:
             requests: { cpu: "500m", memory: "1Gi" }
             limits: { cpu: "2", memory: "2Gi" }  # embedding model + gRPC worker pool

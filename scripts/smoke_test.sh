@@ -5,7 +5,8 @@ set -euo pipefail
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:8000}"
 
 echo "== /healthz =="
-curl -sf "$GATEWAY_URL/healthz" | tee /dev/stderr
+# 503 (not ready) prints which dependency is down before the script stops.
+curl -sS --fail-with-body "$GATEWAY_URL/healthz" | tee /dev/stderr
 
 echo
 echo "== /token =="

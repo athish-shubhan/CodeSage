@@ -2,6 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from prometheus_fastapi_instrumentator import Instrumentator
 
@@ -47,14 +48,20 @@ async def livez() -> dict:
 
 
 @app.get("/healthz")
-async def healthz() -> dict:
+async def healthz() -> JSONResponse:
     """Readiness probe: aggregates the LLM and retrieval dependencies, since
-    this pod shouldn't receive traffic until both are reachable."""
+    this pod shouldn't receive traffic until both are reachable. Answers 503
+    when either is down: Kubernetes' httpGet probe only looks at the status
+    code, and this used to return 200 either way, so it never took a pod out
+    of rotation."""
     llm_ok = await llm_client.health()
     retrieval = await rag_client.health()
-    return {
+    ready = llm_ok and bool(retrieval.get("ok"))
+    body = {
         "gateway": "ok",
+        "ready": ready,
         "llm_backend": settings.llm_backend,
         "llm_status": "ok" if llm_ok else "unreachable",
         "retrieval": retrieval,
     }
+    return JSONResponse(body, status_code=200 if ready else 503)
