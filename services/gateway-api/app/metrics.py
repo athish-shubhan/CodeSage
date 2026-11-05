@@ -18,3 +18,9 @@ AGENT_INJECTION_FLAGS = Counter(
     "agent_injection_flags_total", "Instruction-like sentences removed from tool results, by rule", ["rule"]
 )
 AGENT_AUDIT_WRITE_FAILURES = Counter("agent_audit_write_failures_total", "Audit log lines that could not be written")
+CHAT_INJECTION_FLAGS = Counter(
+    "chat_injection_flags_total", "Instruction-like sentences removed from /chat and /ws/chat context, by rule", ["rule"]
+)
+CHAT_CITATIONS = Counter(
+    "chat_citations_total", "Citations in /chat and /ws/chat answers, by whether a retrieved chunk backs them", ["grounded"]
+)

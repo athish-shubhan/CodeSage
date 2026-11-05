@@ -7,32 +7,13 @@ from pydantic import BaseModel, Field
 from app.agent.loop import run_agent
 from app.auth import current_user
 from app.config import settings
+from app.models import Citations, InjectionFlag
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
 
 class AgentRequest(BaseModel):
     task: str = Field(max_length=settings.max_question_chars)
-
-
-class UnsupportedIdentifier(BaseModel):
-    identifier: str  # a code name or path the answer attributes to the citations below
-    citations: list[str]  # "path:start-end"; none of their tool text contains the identifier
-
-
-class Citations(BaseModel):
-    grounded: list[str]  # "path:start-end" backed by a tool result in this run
-    ungrounded: list[str]  # cited by the model, never shown to it by a tool (or only as removed text)
-    unsupported_identifiers: list[UnsupportedIdentifier] = []
-
-
-class InjectionFlag(BaseModel):
-    tool: str
-    rule: str  # which app/agent/untrusted.py rule matched
-    text: str  # the removed sentence (truncated)
-    source_path: str | None = None
-    start_line: int | None = None
-    end_line: int | None = None
 
 
 class AgentResponse(BaseModel):

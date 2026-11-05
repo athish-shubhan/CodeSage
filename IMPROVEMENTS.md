@@ -134,3 +134,15 @@ Branch `improve/round-3`, stacked on `improve/round-2` (athish-shubhan/CodeSage#
 - The compose and k8s changes were validated as YAML only; there is no Docker daemon in this environment to bring the stack up. `make ingest-self` uses `/data/codesage-agent`, inside the new allowlist.
 - Generation checks cover ingests through any replica, but not someone editing Qdrant by hand.
 - The gateway still forwards gRPC and LLM error details to clients verbatim (internal hostnames can appear in them).
+
+## Round 4: injection guard and citation checks on /chat, accurate chunk line numbers, no internal addresses in errors
+
+Branch `improve/round-4`, stacked on `improve/round-3` (athish-shubhan/CodeSage#4).
+
+### 1. `/chat` and `/ws/chat` had none of the untrusted-data handling `/agent` got
+
+**Found:** the injection guard, delimiters, and citation checks were only wired into the agent loop, but `/chat` and `/ws/chat` put the same retrieved repository text into the prompt. Reproduced with the `payments.py` fixture chunk: the injected `AUDIT-OK-7731` sentence reached the LLM prompt, nothing delimited the context, and the response had no citation verdicts.
+
+**Changed:** `app/chat_guard.py` runs `untrusted.sanitize` on each retrieved chunk before `build_prompt`, which now wraps the context in the same `<<untrusted ...>>` delimiters with a matching system-prompt rule. The answer is checked with the same `citations.check`/`unsupported_identifiers` against the sanitized chunks. `/chat` returns `citations` and `injection_flags` alongside the unchanged `sources`; on `/ws/chat` the `sources` frame carries `injection_flags` and the `done` frame `citations` (new keys only, no new frame types). New counters `chat_injection_flags_total{rule}` and `chat_citations_total{grounded}`.
+
+**Verified:** 4 new tests: removals mapped to file lines 7 and 8, the canary absent from the prompt, a citation to the injected lines ungrounded, an invented identifier reported, the same over the WebSocket, and empty verdicts with no sources. Existing chat and WebSocket tests pass unchanged.
