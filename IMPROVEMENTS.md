@@ -235,3 +235,28 @@ Branch `improve/round-6`, stacked on `improve/round-5` (athish-shubhan/CodeSage#
 **Changed:** only header lines (`[path:start-end]` alone on a line) are evidence, and `escape_header_lines` prefixes a backslash to any line of retrieved content shaped exactly like a header, in `search_code` results, the `/chat` prompt, and the `/chat` check, so the model and the checker see the same defused text. Inline mentions are left as written.
 
 **Verified:** 4 new tests (inline mention, forged header line, `search_code` escaping, `/chat` end to end); all 4 fail on the old code. The agent eval gate is unchanged at 45/45.
+
+### 2. Concurrent ingests of one collection embedded the repo twice
+
+**Found:** two `IngestRepo` calls on the same collection at once, which a retried RPC (the gateway's client retries `UNAVAILABLE`) or a double-submitted `/ingest` produces, each saw every file as changed. Measured with a 5-chunk repo and a slowed embedder: 10 chunks embedded for 5 chunks of content.
+
+**Changed:** ingests of one collection are serialized per process; the second waits and finds nothing changed. Different collections do not wait for each other. Two replicas ingesting the same collection at the same time can still both do the work (documented).
+
+**Verified:** the same measurement now embeds 5 chunks (one ingest embeds 5, the other 0); 2 new tests.
+
+### Results
+
+| Suite | Before (round 5) | After |
+|---|---|---|
+| gateway-api | 114 (+1 skipped) | 118 passed, 1 skipped |
+| mcp-adapter (own venv) | 3 | 3 passed |
+| retrieval-service | 67 | 69 passed |
+| integration | 5 | 5 passed |
+| eval | 31 | 31 passed |
+| agent eval gate | 45/45 | 45/45 (detector 0.90 / 0.78 unchanged) |
+| ruff 0.14.0 | clean | clean |
+
+### Not done
+
+- Ingest serialization is per process, not across replicas.
+- The live column of the eval report still has not been run: no model weights are reachable from this environment (Hugging Face, the Ollama registry and GitHub releases are blocked by the proxy).
