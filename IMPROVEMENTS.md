@@ -154,3 +154,27 @@ Branch `improve/round-4`, stacked on `improve/round-3` (athish-shubhan/CodeSage#
 **Changed:** `chunking.trimmed_span` trims blank edge lines from the span as well as the text; the text is byte-identical to before. Existing indexes keep their old line numbers for unchanged files until those files are re-ingested (ingest skips unchanged hashes).
 
 **Verified:** 2 new tests, including one that checks every line of every chunk of this repo against the file; both fail on the old chunker.
+
+### 3. Error responses carried internal addresses
+
+**Found:** reproduced with mocked failures: `/chat` returned `retrieval-service unavailable: ... ipv4:10.42.7.19:50051: Connection refused` and `LLM backend unavailable: Server error ... for url 'http://ollama.internal.svc:11434/v1/chat/completions'`; `/ws/chat` sent gRPC's whole debug string.
+
+**Changed:** clients get the dependency and the category (`retrieval-service unavailable (UNAVAILABLE)`, `LLM backend unavailable (HTTP 500)`, `(timed out)`); the full error is logged at WARNING. Status codes are unchanged (503, 502, 400 for a refused `repo_path`, whose message is our own validation text and is still returned).
+
+**Verified:** 3 new tests (REST gRPC, REST LLM, WebSocket), including that the address still reaches the server log.
+
+### Results
+
+| Suite | Before (round 3) | After |
+|---|---|---|
+| gateway-api | 101 | 108 passed |
+| retrieval-service | 65 | 67 passed |
+| integration | 5 | 5 passed |
+| eval | 29 | 29 passed |
+| agent eval gate | passed | passed (36/36, detector 0.90 / 0.78; false-positive corpus now 46 files, still 1 flag) |
+| ruff 0.14.0 | clean | clean |
+
+### Not done
+
+- The `/chat` guard is not in `eval/agent_eval.py`'s cases; it is covered by gateway tests only.
+- The MCP adapter (`app/mcp/server.py`) still returns raw retrieved text to MCP clients; it runs in its own environment and was not changed.

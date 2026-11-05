@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, We
 from app import chat_guard, rag_client
 from app.auth import decode_token
 from app.config import settings
+from app.errors import log, public_detail
 from app.llm_client import build_prompt, stream_chat
 
 router = APIRouter(tags=["chat"])
@@ -72,7 +73,9 @@ async def ws_chat(websocket: WebSocket) -> None:
                     answer.append(token_text)
                     await websocket.send_json({"type": "token", "text": token_text})
             except (grpc.aio.AioRpcError, httpx.HTTPError) as exc:
-                await websocket.send_json({"type": "error", "detail": str(exc)})
+                detail = public_detail(exc)
+                log.warning("downstream failure on /ws/chat: %s: %r", detail, exc)
+                await websocket.send_json({"type": "error", "detail": detail})
                 continue
 
             await websocket.send_json(
