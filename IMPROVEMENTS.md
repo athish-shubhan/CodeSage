@@ -279,7 +279,7 @@ Branch `improve/round-7`, stacked on `improve/round-6` (athish-shubhan/CodeSage#
 
 ### Verification
 
-There is no Docker daemon in this environment, so neither change could be run here; this PR's `build-images` job is the first run of both, and its result is recorded in the PR. The k8s files were checked to parse, as CI's `k8s-manifests` job does; they have not been applied to a cluster. No Python code changed, so the test suites are as in round 6.
+There is no Docker daemon in this environment, so neither change could be run here; the first run of both was this PR's CI. Both `build-images` jobs passed the new step on its first run (13/13 checks green): each image started, answered its health probe, and ran unprivileged; the gateway job's log reads `running as uid 10001`. The k8s files were checked to parse, as CI's `k8s-manifests` job does; they have not been applied to a cluster. No Python code changed, so the test suites are as in round 6.
 
 ### Not done
 
