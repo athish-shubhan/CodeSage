@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -66,7 +67,26 @@ def allowed_roots() -> list[str]:
     return [os.path.realpath(r) for r in raw.split(os.pathsep) if r.strip()]
 
 
+_ingest_locks: dict[str, threading.Lock] = {}
+_ingest_locks_guard = threading.Lock()
+
+
+def _ingest_lock(collection: str) -> threading.Lock:
+    with _ingest_locks_guard:
+        return _ingest_locks.setdefault(collection, threading.Lock())
+
+
 def ingest(collection: str, repo_path: str, include_globs: list[str] | None = None) -> IngestResult:
+    """Runs _ingest with one ingest per collection at a time in this process.
+    Two concurrent ingests (a retried RPC, a double-submitted /ingest) each saw
+    every file as changed and embedded the whole repo twice; queued behind the
+    first, the second finds nothing changed. Across replicas this still needs
+    callers not to ingest the same collection through both at once."""
+    with _ingest_lock(collection):
+        return _ingest(collection, repo_path, include_globs)
+
+
+def _ingest(collection: str, repo_path: str, include_globs: list[str] | None = None) -> IngestResult:
     """Incremental, idempotent ingest. Only files whose content hash changed
     since the last ingest are re-chunked and re-embedded; files that
     disappeared from the repo have their chunks deleted. Embedding is the

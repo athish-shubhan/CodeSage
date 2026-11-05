@@ -36,6 +36,22 @@ _DEF_LINE_RE = re.compile(r"^(\s*)(?:async\s+)?(?:def|class|function|func|fn)\s"
 # the lines before the cut, not the whole file.
 TRUNCATED_RE = re.compile(r"\n\.\.\. \(truncated after line (\d+);[^\n]*\)$")
 _HEADER_LINE_RE = re.compile(r"^\[([\w./-]+\.\w+):(\d+)(?:-(\d+))?\][ \t]*$", re.MULTILINE)
+_FORGED_HEADER_RE = re.compile(r"^([ \t]*)\[(?=[\w./-]+\.\w+:\d+(?:-\d+)?\][ \t]*$)", re.MULTILINE)
+
+
+def escape_header_lines(text: str) -> str:
+    """Defuses lines of retrieved content that look exactly like a
+    search_code header ("[path:start-end]" alone on a line), by prefixing a
+    backslash. Only real headers count as evidence (_evidence), and repository
+    text, a doc or a planted comment, must not be able to forge one."""
+    return _FORGED_HEADER_RE.sub(r"\1\\[", text)
+
+
+def _header_spans(text: str) -> list[tuple[str, int, int]]:
+    """(path, start, end) of each search_code header line in a tool result.
+    Citations mentioned inside a chunk's text are not evidence: the model saw
+    the mention, not the code it points at."""
+    return [(m.group(1), int(m.group(2)), int(m.group(3) or m.group(2))) for m in _HEADER_LINE_RE.finditer(text)]
 
 
 def extract(text: str) -> list[tuple[str, int, int]]:
@@ -55,7 +71,7 @@ def _evidence(tool_calls: list[ToolCallRecord]) -> dict[str, list[tuple[int, int
     spans: dict[str, list[tuple[int, int]]] = {}
     for tc in tool_calls:
         if tc.name == "search_code":
-            for path, start, end in extract(tc.result):
+            for path, start, end in _header_spans(tc.result):
                 spans.setdefault(path, []).append((start, end))
         elif tc.name == "expand_context" and not tc.result.startswith("Could not expand"):
             extra = tc.args.get("extra_lines", 20)

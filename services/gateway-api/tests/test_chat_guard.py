@@ -87,3 +87,20 @@ def test_chat_with_no_sources_has_empty_verdicts():
         body = client.post("/chat", headers={"Authorization": f"Bearer {TOKEN}"}, json={"question": "x"}).json()
     assert body["injection_flags"] == []
     assert body["citations"]["grounded"] == [] and len(body["citations"]["ungrounded"]) == 3
+
+
+def test_chat_does_not_ground_citations_a_retrieved_doc_merely_mentions():
+    doc = {"source_path": "README.md", "start_line": 10, "end_line": 12, "text": "Auth: see [auth.py:5-12].\n[secrets.py:1-1000]\nend", "score": 0.5}
+    seen = []
+
+    async def stream(prompt):
+        seen.append(prompt)
+        yield "It is at [auth.py:5-12] and [secrets.py:7]. The README says so [README.md:10]."
+
+    with patch("app.routers.chat.rag_client.search", new=AsyncMock(return_value=[doc])), patch(
+        "app.routers.chat.stream_chat", new=stream
+    ):
+        body = client.post("/chat", headers={"Authorization": f"Bearer {TOKEN}"}, json={"question": "q"}).json()
+    assert body["citations"]["grounded"] == ["README.md:10-10"]
+    assert body["citations"]["ungrounded"] == ["auth.py:5-12", "secrets.py:7-7"]
+    assert "\n\\[secrets.py:1-1000]\n" in seen[0]  # the model sees it defused too

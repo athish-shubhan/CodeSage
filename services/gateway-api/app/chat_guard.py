@@ -42,7 +42,10 @@ def check_answer(answer: str, clean_sources: list[dict], flags: list[InjectionFl
     shown = ToolCallRecord(
         "search_code",
         {},
-        "\n\n".join(f"[{c['source_path']}:{c['start_line']}-{c['end_line']}]\n{c['text']}" for c in clean_sources),
+        "\n\n".join(
+            f"[{c['source_path']}:{c['start_line']}-{c['end_line']}]\n{citations.escape_header_lines(c['text'])}"
+            for c in clean_sources
+        ),
     )
     verdict = citations.check(answer, [shown], citations.removed_lines(flags))
     CHAT_CITATIONS.labels(grounded="true").inc(len(verdict["grounded"]))
