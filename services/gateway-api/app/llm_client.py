@@ -69,7 +69,10 @@ async def stream_chat(user_prompt: str) -> AsyncIterator[str]:
                 if data == "[DONE]":
                     break
                 chunk = json.loads(data)
-                delta = chunk.get("choices", [{}])[0].get("delta", {})
+                # Usage-only chunks (OpenAI-style include_usage, sent by some
+                # vLLM/llama.cpp builds) carry "choices": [] and no text.
+                choices = chunk.get("choices") or [{}]
+                delta = choices[0].get("delta") or {}
                 if token := delta.get("content"):
                     yield token
 

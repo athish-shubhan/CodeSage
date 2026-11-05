@@ -3,7 +3,7 @@
 A citation `[path:start-end]` is grounded if, during this run, a tool put
 that file region in front of the model: a search_code hit whose line range
 overlaps it, an expand_context window that covers it, or a get_file read of
-that file. Anything else was invented or misremembered by the model. Lines
+that file (only up to where the read was truncated, for a large file). Anything else was invented or misremembered by the model. Lines
 removed from a tool result as instruction-like text (untrusted.py) do not
 count: the model never saw them as content, so they cannot ground anything.
 
@@ -32,6 +32,9 @@ WHOLE_FILE = (1, 10**9)
 SLACK_LINES = 2
 
 _DEF_LINE_RE = re.compile(r"^(\s*)(?:async\s+)?(?:def|class|function|func|fn)\s")
+# tools.get_file ends a truncated read with this; the evidence is then only
+# the lines before the cut, not the whole file.
+TRUNCATED_RE = re.compile(r"\n\.\.\. \(truncated after line (\d+);[^\n]*\)$")
 _HEADER_LINE_RE = re.compile(r"^\[([\w./-]+\.\w+):(\d+)(?:-(\d+))?\][ \t]*$", re.MULTILINE)
 
 
@@ -59,8 +62,14 @@ def _evidence(tool_calls: list[ToolCallRecord]) -> dict[str, list[tuple[int, int
             start = max(1, tc.args.get("start_line", 1) - extra)
             spans.setdefault(tc.args.get("source_path", ""), []).append((start, tc.args.get("end_line", 0) + extra))
         elif tc.name == "get_file" and not tc.result.startswith("File not found"):
-            spans.setdefault(tc.args.get("source_path", ""), []).append(WHOLE_FILE)
+            cut = TRUNCATED_RE.search(tc.result)
+            spans.setdefault(tc.args.get("source_path", ""), []).append((1, int(cut.group(1))) if cut else WHOLE_FILE)
     return spans
+
+
+def truncation_notice(lines_shown: int) -> str:
+    """The suffix tools.get_file appends to a truncated read (parsed by TRUNCATED_RE)."""
+    return f"\n... (truncated after line {lines_shown}; use expand_context to read further)"
 
 
 def _has_live_line(lo: int, hi: int, gone: set[int]) -> bool:
