@@ -96,7 +96,7 @@ Qdrant is the only durable store. The BM25 index and the repo root used by `expa
 
 ### MCP adapter
 
-`services/gateway-api/app/mcp/server.py` exposes `search_code` and `expand_context` as MCP tools over stdio, for external MCP clients to reuse CodeSage's retrieval without reimplementing the gRPC client. It wraps `app.rag_client` directly. The gateway's own `/agent` loop does not route through it; there is no benefit to adding a subprocess hop to the gateway's own request path.
+`services/gateway-api/app/mcp/server.py` exposes `search_code` and `expand_context` as MCP tools over stdio, for external MCP clients to reuse CodeSage's retrieval without reimplementing the gRPC client. It wraps `app.rag_client` directly. Its results go to another client's model, so they get the same handling as the gateway's own agent: instruction-like sentences removed and the rest wrapped in `<<untrusted ...>>` delimiters, with `top_k` and `extra_lines` bounded as the agent's tool schemas bound them. CI's `mcp-adapter` job installs only `app/mcp/requirements.txt`, imports the adapter, and runs its tests; that file was missing `protobuf` (it comes with `grpcio-tools`, not `grpcio`), so the documented install could not import the generated stubs. The gateway's own `/agent` loop does not route through it; there is no benefit to adding a subprocess hop to the gateway's own request path.
 
 The `mcp` package pulls a newer `starlette` than the one FastAPI is pinned to, and installing both in the same environment breaks FastAPI. Because of that, this adapter has its own `requirements.txt` under `app/mcp/` and is meant to run in its own environment, not inside the main `gateway-api` container.
 
