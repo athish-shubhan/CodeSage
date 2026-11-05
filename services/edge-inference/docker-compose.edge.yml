@@ -33,6 +33,7 @@ services:
     environment:
       QDRANT_URL: http://qdrant:6333
       EMBEDDING_DEVICE: cuda
+      INGEST_ALLOWED_ROOTS: /data  # IngestRepo refuses paths outside the mounted repos
     ports:
       - "50051:50051"
       - "9101:9101"

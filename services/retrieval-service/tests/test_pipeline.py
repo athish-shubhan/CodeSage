@@ -275,3 +275,32 @@ def test_collection_ingested_before_generations_is_not_rebuilt_on_every_call(rep
         pipeline.search(COLLECTION, "verify_token", strategy="lexical")
 
     assert len(builds) == 1  # rebuilt once after the "restart", then reused
+
+
+def test_ingest_outside_allowed_roots_is_refused_before_touching_anything(repo, tmp_path_factory, monkeypatch):
+    allowed = tmp_path_factory.mktemp("allowed")
+    (allowed / "app.py").write_text("def run():\n    return 1\n")
+    monkeypatch.setenv("INGEST_ALLOWED_ROOTS", f"{allowed}{os.pathsep}/nonexistent-root")
+
+    with pytest.raises(ValueError, match="outside INGEST_ALLOWED_ROOTS"):
+        pipeline.ingest(COLLECTION, str(repo))
+    with pytest.raises(ValueError, match="outside INGEST_ALLOWED_ROOTS"):
+        pipeline.ingest(COLLECTION, "/no/such/dir")  # refused, not "not a directory"
+    with pytest.raises(ValueError, match="outside INGEST_ALLOWED_ROOTS"):
+        pipeline.ingest(COLLECTION, f"{allowed}/../{repo.name}")  # .. cannot climb out
+    assert vector_store.all_payloads(COLLECTION) == []
+
+    assert pipeline.ingest(COLLECTION, str(allowed)).files_seen == 1
+
+
+def test_symlink_into_an_allowed_root_is_judged_by_its_target(repo, tmp_path_factory, monkeypatch):
+    allowed = tmp_path_factory.mktemp("allowed")
+    (allowed / "escape").symlink_to(repo, target_is_directory=True)
+    monkeypatch.setenv("INGEST_ALLOWED_ROOTS", str(allowed))
+    with pytest.raises(ValueError, match="outside INGEST_ALLOWED_ROOTS"):
+        pipeline.ingest(COLLECTION, str(allowed / "escape"))
+
+
+def test_unset_allowed_roots_keeps_the_old_behaviour(repo, monkeypatch):
+    monkeypatch.delenv("INGEST_ALLOWED_ROOTS", raising=False)
+    assert pipeline.ingest(COLLECTION, str(repo)).files_seen == 4

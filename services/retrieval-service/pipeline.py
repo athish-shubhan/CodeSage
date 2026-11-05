@@ -56,11 +56,26 @@ def _sha256(path: str) -> str:
     return h.hexdigest()
 
 
+def allowed_roots() -> list[str]:
+    """Directories IngestRepo may read, from INGEST_ALLOWED_ROOTS (separated
+    by os.pathsep). Unset or empty allows any path, the old behaviour; the
+    shipped compose and k8s configs set it to /data, where repos are mounted.
+    Without it, any token holder can ingest a host directory such as /etc and
+    then read its files back through search and get_file."""
+    raw = os.environ.get("INGEST_ALLOWED_ROOTS", "")
+    return [os.path.realpath(r) for r in raw.split(os.pathsep) if r.strip()]
+
+
 def ingest(collection: str, repo_path: str, include_globs: list[str] | None = None) -> IngestResult:
     """Incremental, idempotent ingest. Only files whose content hash changed
     since the last ingest are re-chunked and re-embedded; files that
     disappeared from the repo have their chunks deleted. Embedding is the
     expensive step, so an unchanged re-ingest does no embedding at all."""
+    # Checked before existence, so a refused path does not reveal whether it exists.
+    roots = allowed_roots()
+    real = os.path.realpath(repo_path)
+    if roots and not any(real == r or real.startswith(r + os.sep) for r in roots):
+        raise ValueError(f"repo_path is outside INGEST_ALLOWED_ROOTS: {repo_path!r}")
     # A missing directory would scan as empty and every indexed file would
     # look deleted, so a mistyped path would wipe the collection. Relative
     # paths resolve against this process's cwd, not the caller's.

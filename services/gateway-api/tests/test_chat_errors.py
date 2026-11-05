@@ -35,3 +35,16 @@ def test_chat_returns_503_not_500_when_retrieval_service_unreachable():
 def test_chat_requires_auth():
     resp = client.post("/chat", json={"question": "hi"})
     assert resp.status_code == 401
+
+
+def test_ingest_refused_by_retrieval_is_a_400_not_an_outage():
+    error = grpc.aio.AioRpcError(
+        grpc.StatusCode.INVALID_ARGUMENT,
+        initial_metadata=grpc.aio.Metadata(),
+        trailing_metadata=grpc.aio.Metadata(),
+        details="repo_path is outside INGEST_ALLOWED_ROOTS: '/etc'",
+    )
+    with patch("app.routers.ingest.rag_client.ingest_repo", new=AsyncMock(side_effect=error)):
+        resp = client.post("/ingest", headers={"Authorization": f"Bearer {_token()}"}, json={"repo_path": "/etc"})
+    assert resp.status_code == 400
+    assert "INGEST_ALLOWED_ROOTS" in resp.json()["detail"]

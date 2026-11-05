@@ -73,6 +73,8 @@ New chunks are embedded and upserted in batches of about 256 points (`pipeline.U
 
 The indexed repository is not trusted, so neither ingest nor the file tools follow a symlink out of it. `iter_source_files` skips a file whose real path is outside the repo (a link's own name picks the extension, so `notes.md -> ~/.ssh/id_rsa` would otherwise be indexed), and `expand_context`/`get_file` resolve symlinks before checking that the path stays under the repo root (`context_expand.resolve_inside`). Links that stay inside the repo still work.
 
+`IngestRepo` itself can be limited to a set of directories with `INGEST_ALLOWED_ROOTS` (separated by `:`). Unset, any path is accepted, as before; the shipped compose files and k8s manifest set it to `/data`, where repos are mounted, because otherwise any token holder could ingest a host directory such as `/etc` and read its files back through search and `get_file`. The real path is checked (so `..` and symlinks cannot climb out), and before existence, so a refused path does not reveal whether it exists. The gateway returns such a refusal as 400, not 503.
+
 Qdrant is the only durable store. The BM25 index and the repo root used by `expand_context`/`get_file` are rebuilt from Qdrant payloads on first use after a restart, or after an ingest that went through another replica (`pipeline.restore`, see "Replicas and state"). Before this, a restarted retrieval-service, or the second of the two k8s replicas, had no lexical index and could not read files until someone re-ingested.
 
 ## Agent layer: bounded tool-calling loop

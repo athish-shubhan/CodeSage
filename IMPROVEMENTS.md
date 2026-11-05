@@ -109,3 +109,28 @@ Branch `improve/round-3`, stacked on `improve/round-2` (athish-shubhan/CodeSage#
 **Changed:** each ingest writes a fresh generation id to a one-point companion collection (`<collection>__ingest_meta`); `restore` rebuilds when the stored generation differs from the one the replica's index was built from. Cost: one point lookup per lexical or hybrid search, `expand_context`, and `get_file`. Dense-only search no longer calls `restore`. Collections ingested before this change have no generation and are rebuilt once, not on every call.
 
 **Verified:** 5 new tests against embedded Qdrant: the added-file and deleted-file cases (both failed before the change), dense search not building the index (also failed before), a never-ingested collection, and a pre-generation collection rebuilding exactly once over three searches.
+
+### 3. `IngestRepo` accepted any path on the retrieval host
+
+**Found:** an authenticated `/ingest` call could index any directory the retrieval-service can read; search and `get_file` then serve its files. On this machine `repo_path="/etc"` would index 27 files (config TOML, JSON policies, shell profiles). The gateway also reported every gRPC error as 503 "retrieval-service unavailable", including a refused or mistyped `repo_path`.
+
+**Changed:** `INGEST_ALLOWED_ROOTS` (`:`-separated) limits ingest to those directories, checked on the real path so `..` and symlinks cannot climb out, and checked before existence so a refusal does not reveal whether a path exists. Unset keeps the old behaviour; `docker-compose.yml`, the edge compose file, and `k8s/retrieval-service.yaml` set it to `/data`, where repos are mounted (`make ingest-self` uses `/data/codesage-agent`). The gateway maps `INVALID_ARGUMENT` to 400.
+
+**Verified:** 3 new retrieval-service tests (outside root, nonexistent path refused rather than "not a directory", `..` escape, symlink into the root judged by its target, unset env unchanged) and 1 gateway test for the 400. Compose and k8s files still parse.
+
+### Results
+
+| Suite | Before (round 2) | After |
+|---|---|---|
+| gateway-api | 95 | 101 passed |
+| retrieval-service | 57 | 65 passed |
+| integration | 5 | 5 passed |
+| eval | 29 | 29 passed |
+| agent eval gate | passed | passed (36/36, detector 0.90 / 0.78, unchanged) |
+| ruff 0.14.0 | clean | clean |
+
+### Not done
+
+- The compose and k8s changes were validated as YAML only; there is no Docker daemon in this environment to bring the stack up. `make ingest-self` uses `/data/codesage-agent`, inside the new allowlist.
+- Generation checks cover ingests through any replica, but not someone editing Qdrant by hand.
+- The gateway still forwards gRPC and LLM error details to clients verbatim (internal hostnames can appear in them).
