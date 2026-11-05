@@ -24,7 +24,7 @@ import time
 from app.agent import audit, citations, untrusted
 from app.agent.model_router import pick_model
 from app.agent.state import AgentState, InjectionFlag, ToolCallRecord
-from app.agent.tools import TOOL_SCHEMAS, call_tool
+from app.agent.tools import TOOL_NAMES, TOOL_SCHEMAS, call_tool
 from app.llm_client import complete_with_tools
 from app.metrics import (
     AGENT_CITATIONS,
@@ -52,12 +52,21 @@ MAX_TOOL_CALLS = 6
 TIMEOUT_S = 60
 
 
-def _parse_args(raw: str | None) -> dict:
+def _parse_args(raw: str | None) -> dict | None:
+    """The tool call's arguments, or None if they are not a JSON object."""
     try:
         args = json.loads(raw or "{}")
     except json.JSONDecodeError:
-        return {}
-    return args if isinstance(args, dict) else {}
+        return None
+    return args if isinstance(args, dict) else None
+
+
+async def _invoke(name: str, args: dict | None) -> str:
+    if args is None:
+        # Said plainly, so the model can fix its call; validating {} instead
+        # used to report "field required" for arguments it did send.
+        return f"Invalid arguments for {name}: arguments must be a JSON object."
+    return await call_tool(name, args)
 
 
 def _finish(state: AgentState, reason: str, answer: str, done: bool = False) -> AgentState:
@@ -93,10 +102,13 @@ async def _run_tools(state: AgentState, tool_calls: list[dict]) -> None:
     admitted, skipped = tool_calls[:budget], tool_calls[budget:]
 
     parsed = [(tc["function"]["name"], _parse_args(tc["function"].get("arguments"))) for tc in admitted]
-    results = await asyncio.gather(*(call_tool(name, args) for name, args in parsed))
+    results = await asyncio.gather(*(_invoke(name, args) for name, args in parsed))
 
     for tc, (name, args), result in zip(admitted, parsed, results):
-        AGENT_TOOL_CALLS.labels(tool=name).inc()
+        # The name comes from model output; an invented one must not become a
+        # new Prometheus series per name.
+        AGENT_TOOL_CALLS.labels(tool=name if name in TOOL_NAMES else "unknown").inc()
+        args = args if args is not None else {}
         clean = _sanitize(state, name, args, result)
         state.tool_calls.append(ToolCallRecord(name=name, args=args, result=clean))
         state.messages.append(

@@ -65,3 +65,27 @@ Branch `improve/round-2`, stacked on `improve/round-1` (athish-shubhan/CodeSage#
 **Changed:** questions and tasks over `GATEWAY_MAX_QUESTION_CHARS` (16,000 characters by default, about 4,000 tokens) and `top_k` outside 1-50 are rejected with 422 before any downstream call; the WebSocket answers with an error frame and stays open. At startup the gateway logs one warning per setting still at its shipped value. Defaults are unchanged: nothing is refused, only reported.
 
 **Verified:** 8 new tests (oversized question, `top_k` 0 and 51, a question exactly at the limit accepted, oversized agent task, oversized WebSocket question, warnings reported and cleared, startup logging); each rejected case asserts no downstream call was made.
+
+### 3. Model output controlled a Prometheus label; malformed tool arguments got a misleading error
+
+**Found:** `agent_tool_calls_total{tool}` used the tool name from the model's reply as its label. Reproduced: one run with five invented tool names created five new series. A model that hallucinates names, or is steered by injected text, can grow the series count without bound. Separately, tool arguments that were not valid JSON were silently replaced with `{}`, so the model was told `query: field required` about arguments it did send.
+
+**Changed:** names outside the three real tools are counted as `unknown`. Arguments that are not a JSON object get `Invalid arguments for <tool>: arguments must be a JSON object.` and the tool is not called.
+
+**Verified:** 2 new tests.
+
+### Results
+
+| Suite | Before (round 1) | After |
+|---|---|---|
+| gateway-api | 85 | 95 passed |
+| retrieval-service | 54 | 57 passed |
+| integration | 5 | 5 passed |
+| eval | 29 | 29 passed |
+| agent eval gate | passed | passed (36/36, detector 0.90 / 0.78, unchanged) |
+| ruff 0.14.0 | clean | clean |
+
+### Not done
+
+- The 32 MB limit and the batch size were not exercised against a real Qdrant server here; CI's `retrieval-smoke` job uses one but only ingests 4 files.
+- Request limits are per request, not per user; there is still no rate limiting in the gateway (Traefik is the documented place for it).
