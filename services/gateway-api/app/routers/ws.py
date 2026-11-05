@@ -1,12 +1,14 @@
 import json
+from dataclasses import asdict
 
 import grpc
 import httpx
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, WebSocketException, status
 
-from app import rag_client
+from app import chat_guard, rag_client
 from app.auth import decode_token
 from app.config import settings
+from app.errors import log, public_detail
 from app.llm_client import build_prompt, stream_chat
 
 router = APIRouter(tags=["chat"])
@@ -60,15 +62,24 @@ async def ws_chat(websocket: WebSocket) -> None:
 
             try:
                 sources = await rag_client.search(question)
-                await websocket.send_json({"type": "sources", "sources": sources})
+                clean, flags = chat_guard.sanitize_sources(sources)
+                await websocket.send_json(
+                    {"type": "sources", "sources": sources, "injection_flags": [asdict(f) for f in flags]}
+                )
 
-                prompt = build_prompt(question, sources)
+                prompt = build_prompt(question, clean)
+                answer = []
                 async for token_text in stream_chat(prompt):
+                    answer.append(token_text)
                     await websocket.send_json({"type": "token", "text": token_text})
             except (grpc.aio.AioRpcError, httpx.HTTPError) as exc:
-                await websocket.send_json({"type": "error", "detail": str(exc)})
+                detail = public_detail(exc)
+                log.warning("downstream failure on /ws/chat: %s: %r", detail, exc)
+                await websocket.send_json({"type": "error", "detail": detail})
                 continue
 
-            await websocket.send_json({"type": "done"})
+            await websocket.send_json(
+                {"type": "done", "citations": chat_guard.check_answer("".join(answer), clean, flags)}
+            )
     except WebSocketDisconnect:
         return

@@ -26,9 +26,12 @@ def chunk_python_source(source: str, rel_path: str, window_chunks) -> list | Non
     chunks = []
     for start, end in units:
         if end - start + 1 <= MAX_UNIT_LINES:
-            text = "".join(lines[start - 1 : end]).strip()
-            if text:
-                chunks.append(_make_chunk(text, rel_path, start, end))
+            from chunking import trimmed_span
+
+            span = trimmed_span(lines, start - 1, end)
+            if span:
+                lo, hi = span
+                chunks.append(_make_chunk("".join(lines[lo:hi]).strip(), rel_path, lo + 1, hi))
         else:
             chunks.extend(window_chunks(lines[start - 1 : end], rel_path, base_line=start))
     return chunks
