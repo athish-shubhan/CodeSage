@@ -314,3 +314,15 @@ No Python code changed: gateway-api 118 passed (1 skipped), retrieval-service 69
 
 - Ingest across replicas is still unserialized (see round 6): fixing it needs a lease in shared storage or routing every ingest to one replica, a design choice rather than a local fix.
 - The live column of the eval report still needs a reachable LLM.
+
+## Round 9: streaming agent runs, citation repair, request ids across services
+
+Branch `improve/round-9`, stacked on `improve/round-8` (athish-shubhan/CodeSage#9). This round adds features rather than fixing defects.
+
+### 1. `POST /agent/stream`: an agent run as server-sent events
+
+**Why:** an agent run takes several LLM round-trips and tool calls, up to the 60 s deadline, and `POST /agent` answered only at the end.
+
+**Added:** the same run streamed as `step`, `tool_call` (name, arguments), `tool_result` (size, injection-guard removals) and `repair` events while it works, then one `answer` event with the full response (citations, flags, request id) or one `error` event (same categories as the REST errors). The loop takes an optional event callback, so `POST /agent` is unchanged. A client that disconnects cancels the run, so it stops spending LLM and tool calls nobody will read.
+
+**Verified:** 4 tests: the event sequence and final answer for a run that reads the injected fixture file, an error event for a malformed LLM response, auth required, and cancellation of a hung LLM call when the stream is closed.

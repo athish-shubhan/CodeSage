@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import Awaitable, Callable
 
 from app.agent import audit, citations, untrusted
 from app.agent.model_router import pick_model
@@ -50,6 +51,14 @@ SYSTEM_PROMPT = (
 MAX_STEPS = 4
 MAX_TOOL_CALLS = 6
 TIMEOUT_S = 60
+
+# Progress events for POST /agent/stream (app/routers/agent.py): step,
+# tool_call, tool_result. A callback, so the plain /agent path pays nothing.
+EventSink = Callable[[dict], Awaitable[None]]
+
+
+async def _no_events(event: dict) -> None:
+    return None
 
 
 def _parse_args(raw: str | None) -> dict | None:
@@ -93,7 +102,7 @@ def _sanitize(state: AgentState, name: str, args: dict, result: str) -> str:
     return clean
 
 
-async def _run_tools(state: AgentState, tool_calls: list[dict]) -> None:
+async def _run_tools(state: AgentState, tool_calls: list[dict], emit: EventSink = _no_events) -> None:
     """Runs this step's tool calls concurrently (they are independent
     read-only lookups) and answers every tool_call id, including ones
     skipped for exceeding MAX_TOOL_CALLS. OpenAI-compatible servers reject
@@ -102,6 +111,8 @@ async def _run_tools(state: AgentState, tool_calls: list[dict]) -> None:
     admitted, skipped = tool_calls[:budget], tool_calls[budget:]
 
     parsed = [(tc["function"]["name"], _parse_args(tc["function"].get("arguments"))) for tc in admitted]
+    for name, args in parsed:
+        await emit({"type": "tool_call", "name": name, "args": args if args is not None else {}})
     results = await asyncio.gather(*(_invoke(name, args) for name, args in parsed))
 
     for tc, (name, args), result in zip(admitted, parsed, results):
@@ -109,8 +120,17 @@ async def _run_tools(state: AgentState, tool_calls: list[dict]) -> None:
         # new Prometheus series per name.
         AGENT_TOOL_CALLS.labels(tool=name if name in TOOL_NAMES else "unknown").inc()
         args = args if args is not None else {}
+        flags_before = len(state.injection_flags)
         clean = _sanitize(state, name, args, result)
         state.tool_calls.append(ToolCallRecord(name=name, args=args, result=clean))
+        await emit(
+            {
+                "type": "tool_result",
+                "name": name,
+                "chars": len(clean),
+                "injection_flags": len(state.injection_flags) - flags_before,
+            }
+        )
         state.messages.append(
             {"role": "tool", "tool_call_id": tc.get("id", name), "content": untrusted.wrap(name, clean)}
         )
@@ -120,7 +140,7 @@ async def _run_tools(state: AgentState, tool_calls: list[dict]) -> None:
         )
 
 
-async def run_agent(task: str) -> AgentState:
+async def run_agent(task: str, on_event: EventSink | None = None) -> AgentState:
     state = AgentState(
         task=task,
         messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": task}],
@@ -128,7 +148,7 @@ async def run_agent(task: str) -> AgentState:
     model = pick_model(task)
     started, error = time.monotonic(), None
     try:
-        return await _run(state, model)
+        return await _run(state, model, on_event or _no_events)
     except BaseException as exc:  # including cancellation when the client goes away
         error = type(exc).__name__
         raise
@@ -136,11 +156,12 @@ async def run_agent(task: str) -> AgentState:
         await audit.record(state, model, time.monotonic() - started, error)
 
 
-async def _run(state: AgentState, model: str) -> AgentState:
+async def _run(state: AgentState, model: str, emit: EventSink = _no_events) -> AgentState:
     try:
         async with asyncio.timeout(TIMEOUT_S):
             while state.steps < MAX_STEPS:
                 state.steps += 1
+                await emit({"type": "step", "step": state.steps})
                 allow_tools = len(state.tool_calls) < MAX_TOOL_CALLS
                 message = await complete_with_tools(
                     state.messages, tools=TOOL_SCHEMAS if allow_tools else None, model=model
@@ -150,7 +171,7 @@ async def _run(state: AgentState, model: str) -> AgentState:
                 tool_calls = message.get("tool_calls") or []
                 if not tool_calls:
                     return _finish(state, "done", message.get("content") or "", done=True)
-                await _run_tools(state, tool_calls)
+                await _run_tools(state, tool_calls, emit)
     except TimeoutError:
         return _finish(state, "timeout", "I ran out of time gathering information for this task.")
 
