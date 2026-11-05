@@ -11,9 +11,16 @@ spec:
     metadata:
       labels: { app: retrieval-service }
     spec:
+      # The image runs as uid 10001 (see its Dockerfile); refuse to start it as root.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
       containers:
         - name: retrieval-service
           image: codesage/retrieval-service:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
           ports:
             - containerPort: 50051
             - containerPort: 9101
