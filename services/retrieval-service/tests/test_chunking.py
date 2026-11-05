@@ -77,3 +77,30 @@ def test_ingest_scan_skips_symlinks_that_leave_the_repo(tmp_path):
     (repo / "alias.py").symlink_to(repo / "ok.py")
 
     assert sorted(rel for _, rel in iter_source_files(str(repo))) == ["alias.py", "ok.py"]
+
+
+def test_chunk_start_line_names_its_first_non_blank_line():
+    from chunking import window_chunks
+
+    lines = ["\n", "\n", "first = 1\n", "second = 2\n", "\n"]
+    (chunk,) = window_chunks(lines, "a.yml")
+    assert (chunk.start_line, chunk.end_line) == (3, 4)
+    assert chunk.text.split("\n")[0] == "first = 1"
+
+
+def test_every_chunk_of_this_repo_starts_on_its_reported_line():
+    """Text line i of a chunk is file line start_line + i, for the whole repo."""
+    import os
+
+    from chunking import chunk_file, iter_source_files
+
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    checked = 0
+    for full, rel in iter_source_files(root):
+        file_lines = open(full, encoding="utf-8", errors="ignore").read().splitlines()
+        for c in chunk_file(full, rel):
+            text_lines = c.text.split("\n")
+            assert len(text_lines) == c.end_line - c.start_line + 1, rel
+            assert all(t.strip() == file_lines[c.start_line - 1 + i].strip() for i, t in enumerate(text_lines)), rel
+            checked += 1
+    assert checked > 100

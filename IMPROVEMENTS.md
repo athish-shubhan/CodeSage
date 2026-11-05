@@ -146,3 +146,11 @@ Branch `improve/round-4`, stacked on `improve/round-3` (athish-shubhan/CodeSage#
 **Changed:** `app/chat_guard.py` runs `untrusted.sanitize` on each retrieved chunk before `build_prompt`, which now wraps the context in the same `<<untrusted ...>>` delimiters with a matching system-prompt rule. The answer is checked with the same `citations.check`/`unsupported_identifiers` against the sanitized chunks. `/chat` returns `citations` and `injection_flags` alongside the unchanged `sources`; on `/ws/chat` the `sources` frame carries `injection_flags` and the `done` frame `citations` (new keys only, no new frame types). New counters `chat_injection_flags_total{rule}` and `chat_citations_total{grounded}`.
 
 **Verified:** 4 new tests: removals mapped to file lines 7 and 8, the canary absent from the prompt, a citation to the injected lines ungrounded, an invented identifier reported, the same over the WebSocket, and empty verdicts with no sources. Existing chat and WebSocket tests pass unchanged.
+
+### 2. A chunk's `start_line` could name a blank line its text did not contain
+
+**Found:** while checking that removals map to the right lines, `window_chunks` (and the Python chunker) stripped leading blank lines from a chunk's text but kept the window's first line as `start_line`. Every consumer, the citation check, injection-flag locations, and the model counting lines to cite, reads the text's first line as `start_line`. Measured on this repo: 4 of 543 chunks were off, each by one line (e.g. `docker-compose.vllm.yml:51`).
+
+**Changed:** `chunking.trimmed_span` trims blank edge lines from the span as well as the text; the text is byte-identical to before. Existing indexes keep their old line numbers for unchanged files until those files are re-ingested (ingest skips unchanged hashes).
+
+**Verified:** 2 new tests, including one that checks every line of every chunk of this repo against the file; both fail on the old chunker.
