@@ -89,3 +89,15 @@ Branch `improve/round-2`, stacked on `improve/round-1` (athish-shubhan/CodeSage#
 
 - The 32 MB limit and the batch size were not exercised against a real Qdrant server here; CI's `retrieval-smoke` job uses one but only ingests 4 files.
 - Request limits are per request, not per user; there is still no rate limiting in the gateway (Traefik is the documented place for it).
+
+## Round 3: readiness that gates traffic, replica-fresh lexical index, ingest path allowlist
+
+Branch `improve/round-3`, stacked on `improve/round-2` (athish-shubhan/CodeSage#3).
+
+### 1. `/healthz` returned 200 with its dependencies down
+
+**Found:** the k8s readiness probe is an `httpGet` on `/healthz`, which only looks at the status code, but `/healthz` returned 200 whatever the LLM backend and retrieval-service reported. Reproduced: with both mocked down it answered 200 with `"llm_status": "unreachable"` in the body. The readiness probe could never take a pod out of rotation.
+
+**Changed:** 503 with the same body (plus `"ready": false`) when either dependency is down. `/livez` is unchanged. `scripts/smoke_test.sh` uses `--fail-with-body` so a 503 still prints which dependency is down.
+
+**Verified:** 5 new tests (all four up/down combinations, and `/livez` staying 200).

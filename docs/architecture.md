@@ -118,7 +118,7 @@ Ollama serves a quantized model (`llama3.1:8b-instruct-q4_0` by default) so the 
 
 ## Liveness vs. readiness
 
-`gateway-api` exposes two health endpoints on purpose. `/livez` checks only that the process itself is alive. `/healthz` aggregates the LLM backend and retrieval-service. Liveness probes point at `/livez` and readiness probes at `/healthz`, otherwise a slow-to-load model or a restarting retrieval-service would cause Kubernetes to kill and restart an otherwise fine gateway pod. Compose mirrors the same idea: `gateway-api` has a soft dependency on the LLM backend, it starts and answers `/healthz` honestly even before Ollama, vLLM, or llama.cpp is ready, rather than blocking the whole stack's boot on it.
+`gateway-api` exposes two health endpoints on purpose. `/livez` checks only that the process itself is alive. `/healthz` aggregates the LLM backend and retrieval-service, and answers 503 with the same body (`"ready": false`) when either is down. Kubernetes' `httpGet` probe only looks at the status code, and this endpoint used to return 200 either way, so the readiness probe never took a pod out of rotation. Liveness probes point at `/livez` and readiness probes at `/healthz`, otherwise a slow-to-load model or a restarting retrieval-service would cause Kubernetes to kill and restart an otherwise fine gateway pod. Compose mirrors the same idea: `gateway-api` has a soft dependency on the LLM backend, it starts and answers `/healthz` honestly even before Ollama, vLLM, or llama.cpp is ready, rather than blocking the whole stack's boot on it.
 
 ## Auth
 
