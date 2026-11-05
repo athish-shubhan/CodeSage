@@ -251,8 +251,24 @@ jobs:
           context: services/${{ matrix.service }}
           tags: codesage/${{ matrix.service }}:ci
           push: false
+          load: true  # into the local daemon, so the next step can start it
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      - name: Start the image and probe it
+        # A build only proves the image assembles. This proves it starts, serves
+        # its health endpoint, and runs as a non-root user.
+        run: |
+          if [ "${{ matrix.service }}" = gateway-api ]; then
+            port=8000; probe=http://localhost:8000/livez
+          else
+            port=9101; probe=http://localhost:9101  # metrics; starts without Qdrant (connected lazily)
+          fi
+          docker run -d --name svc -p "$port:$port" codesage/${{ matrix.service }}:ci
+          timeout 60 bash -c "until curl -sf $probe >/dev/null; do sleep 2; done" || { docker logs svc; exit 1; }
+          uid=$(docker exec svc id -u)
+          echo "running as uid $uid"
+          [ "$uid" != 0 ] || { echo "container runs as root"; exit 1; }
 
   proto-sync:
     # Each service keeps its own copy of the proto so its Docker build

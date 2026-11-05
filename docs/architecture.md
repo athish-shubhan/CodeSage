@@ -155,7 +155,7 @@ A few components that might be expected here were left out, on purpose:
 
 ## Containers
 
-Both service images run as an unprivileged user, uid 10001 (numeric, so Kubernetes' `runAsNonRoot` can verify it), with a home directory for the embedding model's runtime download (`~/.cache/huggingface`). Nothing writes under `/app`; if `GATEWAY_AGENT_AUDIT_LOG` is enabled it must point at a path uid 10001 can write, such as a mounted volume. The k8s Deployments set `runAsNonRoot`, `runAsUser: 10001`, `allowPrivilegeEscalation: false` and drop all capabilities.
+Both service images run as an unprivileged user, uid 10001 (numeric, so Kubernetes' `runAsNonRoot` can verify it), with a home directory for the embedding model's runtime download (`~/.cache/huggingface`). Nothing writes under `/app`; if `GATEWAY_AGENT_AUDIT_LOG` is enabled it must point at a path uid 10001 can write, such as a mounted volume. The k8s Deployments set `runAsNonRoot`, `runAsUser: 10001`, `allowPrivilegeEscalation: false` and drop all capabilities. CI's `build-images` job loads each built image, starts it, waits for its health endpoint (`/livez` for the gateway, the metrics port for retrieval-service, which starts without Qdrant), and fails if the container runs as root.
 
 ## Resource management
 

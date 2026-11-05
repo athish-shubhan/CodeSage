@@ -270,3 +270,18 @@ Branch `improve/round-7`, stacked on `improve/round-6` (athish-shubhan/CodeSage#
 **Found:** neither Dockerfile set a user, so `gateway-api` and `retrieval-service` ran as root in compose and k8s, and the k8s manifests had no `securityContext`. Both services index or serve repository content that is not trusted (ADR 0006), which is exactly where a process should not hold root.
 
 **Changed:** both images create and switch to uid 10001 with a home directory (the embedding model downloads into `~/.cache/huggingface` at first use; nothing writes under `/app`). The k8s Deployments set `runAsNonRoot: true`, `runAsUser: 10001`, `allowPrivilegeEscalation: false` and drop all capabilities.
+
+### 2. CI built the images but never started them
+
+**Found:** `build-images` only checked that each image assembles; an image that builds but cannot start (a missing runtime dependency, a permissions problem such as the one item 1 could introduce) would pass.
+
+**Changed:** the job now loads each image, starts it, waits up to 60 s for its health endpoint (`/livez` on the gateway, the metrics port on retrieval-service, which starts without Qdrant), and fails if `id -u` inside the container is 0.
+
+### Verification
+
+There is no Docker daemon in this environment, so neither change could be run here; the first run of both was this PR's CI. Both `build-images` jobs passed the new step on its first run (13/13 checks green): each image started, answered its health probe, and ran unprivileged; the gateway job's log reads `running as uid 10001`. The k8s files were checked to parse, as CI's `k8s-manifests` job does; they have not been applied to a cluster. No Python code changed, so the test suites are as in round 6.
+
+### Not done
+
+- `readOnlyRootFilesystem` is not set: retrieval-service needs a writable home for the model cache, which would need an `emptyDir` or a pre-downloaded model in the image.
+- Compose does not set `user:`; it relies on the image's `USER`.
