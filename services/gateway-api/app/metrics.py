@@ -24,3 +24,8 @@ CHAT_INJECTION_FLAGS = Counter(
 CHAT_CITATIONS = Counter(
     "chat_citations_total", "Citations in /chat and /ws/chat answers, by whether a retrieved chunk backs them", ["grounded"]
 )
+AGENT_CITATION_REPAIRS = Counter(
+    "agent_citation_repairs_total",
+    "Citation-repair turns, by whether the revised answer passed the checks",
+    ["resolved"],
+)

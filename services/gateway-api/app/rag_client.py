@@ -15,6 +15,7 @@ import grpc
 
 import retrieval_pb2
 import retrieval_pb2_grpc
+from app import request_id
 from app.config import settings
 
 # Retry only UNAVAILABLE (connection refused/reset, server restarting), with
@@ -58,6 +59,12 @@ def _stub() -> retrieval_pb2_grpc.RetrievalStub:
     return retrieval_pb2_grpc.RetrievalStub(_channel)
 
 
+def _metadata() -> tuple[tuple[str, str], ...] | None:
+    """The current request id as gRPC metadata, so retrieval-service logs it too."""
+    rid = request_id.get()
+    return ((request_id.HEADER, rid),) if rid else None
+
+
 async def close() -> None:
     global _channel, _channel_loop
     if _channel is not None:
@@ -80,7 +87,7 @@ async def search(
         strategy=strategy,
         min_score=settings.retrieval_min_score,
     )
-    response = await _stub().Search(request, timeout=10)
+    response = await _stub().Search(request, timeout=10, metadata=_metadata())
     return [
         {
             "text": c.text,
@@ -103,7 +110,7 @@ async def expand_context(
         end_line=end_line,
         extra_lines=extra_lines,
     )
-    response = await _stub().ExpandContext(request, timeout=10)
+    response = await _stub().ExpandContext(request, timeout=10, metadata=_metadata())
     return response.text if response.found else None
 
 
@@ -111,7 +118,7 @@ async def get_file(source_path: str, max_bytes: int = 20_000, collection: str | 
     request = retrieval_pb2.GetFileRequest(
         collection=collection or settings.default_collection, source_path=source_path, max_bytes=max_bytes
     )
-    response = await _stub().GetFile(request, timeout=10)
+    response = await _stub().GetFile(request, timeout=10, metadata=_metadata())
     if not response.found:
         return None
     return {"text": response.text, "truncated": response.truncated}
@@ -123,7 +130,7 @@ async def ingest_repo(repo_path: str, collection: str | None = None, include_glo
         collection=collection or settings.default_collection,
         include_globs=include_globs or [],
     )
-    response = await _stub().IngestRepo(request, timeout=600)
+    response = await _stub().IngestRepo(request, timeout=600, metadata=_metadata())
     return {
         "files_indexed": response.files_indexed,
         "chunks_indexed": response.chunks_indexed,
@@ -135,7 +142,7 @@ async def ingest_repo(repo_path: str, collection: str | None = None, include_glo
 
 async def health() -> dict:
     try:
-        response = await _stub().Health(retrieval_pb2.HealthRequest(), timeout=3)
+        response = await _stub().Health(retrieval_pb2.HealthRequest(), timeout=3, metadata=_metadata())
         return {"ok": response.ok, "vector_store_status": response.vector_store_status}
     except grpc.aio.AioRpcError as exc:
         return {"ok": False, "vector_store_status": str(exc)}

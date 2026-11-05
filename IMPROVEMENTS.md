@@ -314,3 +314,47 @@ No Python code changed: gateway-api 118 passed (1 skipped), retrieval-service 69
 
 - Ingest across replicas is still unserialized (see round 6): fixing it needs a lease in shared storage or routing every ingest to one replica, a design choice rather than a local fix.
 - The live column of the eval report still needs a reachable LLM.
+
+## Round 9: streaming agent runs, citation repair, request ids across services
+
+Branch `improve/round-9`, stacked on `improve/round-8` (athish-shubhan/CodeSage#9). This round adds features rather than fixing defects.
+
+### 1. `POST /agent/stream`: an agent run as server-sent events
+
+**Why:** an agent run takes several LLM round-trips and tool calls, up to the 60 s deadline, and `POST /agent` answered only at the end.
+
+**Added:** the same run streamed as `step`, `tool_call` (name, arguments), `tool_result` (size, injection-guard removals) and `repair` events while it works, then one `answer` event with the full response (citations, flags, request id) or one `error` event (same categories as the REST errors). The loop takes an optional event callback, so `POST /agent` is unchanged. A client that disconnects cancels the run, so it stops spending LLM and tool calls nobody will read.
+
+**Verified:** 4 tests: the event sequence and final answer for a run that reads the injected fixture file, an error event for a malformed LLM response, auth required, and cancellation of a hung LLM call when the stream is closed.
+
+### 2. Citation repair (opt-in, `GATEWAY_AGENT_REPAIR_CITATIONS`)
+
+**Why:** rounds 0-6 made the gateway good at detecting ungrounded citations and invented names, but only reported them. The agent can use that verdict to fix its own answer.
+
+**Added:** when a final answer fails the checks, the loop sends one more turn listing exactly which citations point at nothing a tool returned and which names are not in the cited text, and asks the model to revise, check with the tools, or say what it could not verify. At most one repair per run, only if a step is left, and the revision is checked and returned whatever it says. Exposed as `repairs` in the response and audit log, and `agent_citation_repairs_total{resolved}`. Off by default: it adds an LLM round-trip to failing answers, and `/agent` behaves exactly as before unless enabled.
+
+**Verified:** 6 tests (feedback content, the repaired answer's verdict, off by default, passing answers not sent back, one repair at most, no repair without a step left) and a new eval case: replay passes 49/49 label checks (was 45/45), and the repair case fails with repair disabled. Whether repair helps a real model is not measured; `eval/agent_eval.py --live` runs that case against one.
+
+### 3. One request id across the gateway, retrieval-service, and the audit log
+
+**Why:** a failing request touched two services and an audit file with nothing linking their log lines.
+
+**Added:** ASGI middleware takes the client's `X-Request-ID` when it is a safe token, otherwise generates one, and echoes it in the response header. The gateway's log lines and the audit log carry it; `rag_client` sends it as `x-request-id` gRPC metadata on every RPC; retrieval-service sets it per RPC (reset afterwards, since RPCs share worker threads) and logs one line per RPC with its duration.
+
+**Verified:** 9 gateway tests (echo, replacement of missing and unsafe ids, audit log, response field, gRPC metadata, log filter) and 1 integration test over real gRPC showing retrieval-service sees the gateway's id during the RPC and resets it after.
+
+### Results
+
+| Suite | Before (round 8) | After |
+|---|---|---|
+| gateway-api | 118 (+1 skipped) | 137 passed, 1 skipped |
+| retrieval-service | 69 | 69 passed |
+| integration | 5 | 6 passed |
+| eval | 31 | 32 passed |
+| agent eval gate | 45/45 | 49/49 (12 cases) |
+| ruff 0.14.0 | clean | clean |
+
+### Not done
+
+- The streaming endpoint is not proxied through `/ws/chat`; WebSocket clients still get `/chat` only.
+- Repair's effect on answer quality needs a live model to measure.

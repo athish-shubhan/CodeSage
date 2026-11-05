@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from app import llm_client, rag_client
+from app import llm_client, rag_client, request_id
 from app.auth import insecure_defaults, login_for_token
 from app.config import settings
 from app.routers import agent, chat, ingest, ws
@@ -22,7 +22,9 @@ async def lifespan(app: FastAPI):
     await rag_client.close()
 
 
+request_id.configure_logging()
 app = FastAPI(title="CodeSage Gateway API", version="0.1.0", lifespan=lifespan)
+app.add_middleware(request_id.RequestIdMiddleware)
 
 app.include_router(chat.router)
 app.include_router(ingest.router)

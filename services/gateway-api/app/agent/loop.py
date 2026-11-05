@@ -20,13 +20,17 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import Awaitable, Callable
 
+from app import request_id
 from app.agent import audit, citations, untrusted
 from app.agent.model_router import pick_model
 from app.agent.state import AgentState, InjectionFlag, ToolCallRecord
 from app.agent.tools import TOOL_NAMES, TOOL_SCHEMAS, call_tool
+from app.config import settings
 from app.llm_client import complete_with_tools
 from app.metrics import (
+    AGENT_CITATION_REPAIRS,
     AGENT_CITATIONS,
     AGENT_INJECTION_FLAGS,
     AGENT_STEPS,
@@ -50,6 +54,15 @@ SYSTEM_PROMPT = (
 MAX_STEPS = 4
 MAX_TOOL_CALLS = 6
 TIMEOUT_S = 60
+MAX_REPAIRS = 1
+
+# Progress events for POST /agent/stream (app/routers/agent.py): step,
+# tool_call, tool_result, repair. A callback, so the plain /agent path pays nothing.
+EventSink = Callable[[dict], Awaitable[None]]
+
+
+async def _no_events(event: dict) -> None:
+    return None
 
 
 def _parse_args(raw: str | None) -> dict | None:
@@ -69,16 +82,50 @@ async def _invoke(name: str, args: dict | None) -> str:
     return await call_tool(name, args)
 
 
+def _verdict(state: AgentState, answer: str) -> tuple[dict, list[dict]]:
+    return (
+        citations.check(answer, state.tool_calls, citations.removed_lines(state.injection_flags)),
+        citations.unsupported_identifiers(answer, state.tool_calls),
+    )
+
+
+def repair_prompt(verdict: dict, unsupported: list[dict]) -> str:
+    """The feedback turn: exactly what failed, and what the model may do about it."""
+    parts = ["Gateway citation check on your answer, before it is shown to the user:"]
+    if verdict["ungrounded"]:
+        cited = " ".join(f"[{c}]" for c in verdict["ungrounded"])
+        parts.append(f"these citations do not point at anything a tool returned in this conversation: {cited}.")
+    if unsupported:
+        names = ", ".join(f"`{u['identifier']}` (cited as {' '.join(f'[{c}]' for c in u['citations'])})" for u in unsupported)
+        parts.append(f"these names do not appear in the text you cited for them: {names}.")
+    parts.append(
+        "Revise the answer: cite only ranges the tools returned, use the tools again if you need to check "
+        "something, and say plainly what you could not verify instead of guessing."
+    )
+    return " ".join(parts)
+
+
 def _finish(state: AgentState, reason: str, answer: str, done: bool = False) -> AgentState:
     state.stopped_reason, state.answer, state.done = reason, answer, done
-    state.citations = citations.check(answer, state.tool_calls, citations.removed_lines(state.injection_flags))
-    state.unsupported_identifiers = citations.unsupported_identifiers(answer, state.tool_calls)
+    state.citations, state.unsupported_identifiers = _verdict(state, answer)
+    if state.repairs:
+        resolved = not state.citations["ungrounded"] and not state.unsupported_identifiers
+        AGENT_CITATION_REPAIRS.labels(resolved=str(resolved).lower()).inc()
     AGENT_STEPS.observe(state.steps)
     AGENT_STOP_REASON.labels(reason=reason).inc()
     AGENT_CITATIONS.labels(grounded="true").inc(len(state.citations["grounded"]))
     AGENT_CITATIONS.labels(grounded="false").inc(len(state.citations["ungrounded"]))
     AGENT_UNSUPPORTED_IDENTIFIERS.inc(len(state.unsupported_identifiers))
     return state
+
+
+def _should_repair(state: AgentState, answer: str) -> bool:
+    """One more turn is worth it only when it is enabled, unused, there is a
+    step left to spend on it, and the answer actually failed a check."""
+    if not settings.agent_repair_citations or state.repairs >= MAX_REPAIRS or state.steps >= MAX_STEPS:
+        return False
+    verdict, unsupported = _verdict(state, answer)
+    return bool(verdict["ungrounded"] or unsupported)
 
 
 def _sanitize(state: AgentState, name: str, args: dict, result: str) -> str:
@@ -93,7 +140,7 @@ def _sanitize(state: AgentState, name: str, args: dict, result: str) -> str:
     return clean
 
 
-async def _run_tools(state: AgentState, tool_calls: list[dict]) -> None:
+async def _run_tools(state: AgentState, tool_calls: list[dict], emit: EventSink = _no_events) -> None:
     """Runs this step's tool calls concurrently (they are independent
     read-only lookups) and answers every tool_call id, including ones
     skipped for exceeding MAX_TOOL_CALLS. OpenAI-compatible servers reject
@@ -102,6 +149,8 @@ async def _run_tools(state: AgentState, tool_calls: list[dict]) -> None:
     admitted, skipped = tool_calls[:budget], tool_calls[budget:]
 
     parsed = [(tc["function"]["name"], _parse_args(tc["function"].get("arguments"))) for tc in admitted]
+    for name, args in parsed:
+        await emit({"type": "tool_call", "name": name, "args": args if args is not None else {}})
     results = await asyncio.gather(*(_invoke(name, args) for name, args in parsed))
 
     for tc, (name, args), result in zip(admitted, parsed, results):
@@ -109,8 +158,17 @@ async def _run_tools(state: AgentState, tool_calls: list[dict]) -> None:
         # new Prometheus series per name.
         AGENT_TOOL_CALLS.labels(tool=name if name in TOOL_NAMES else "unknown").inc()
         args = args if args is not None else {}
+        flags_before = len(state.injection_flags)
         clean = _sanitize(state, name, args, result)
         state.tool_calls.append(ToolCallRecord(name=name, args=args, result=clean))
+        await emit(
+            {
+                "type": "tool_result",
+                "name": name,
+                "chars": len(clean),
+                "injection_flags": len(state.injection_flags) - flags_before,
+            }
+        )
         state.messages.append(
             {"role": "tool", "tool_call_id": tc.get("id", name), "content": untrusted.wrap(name, clean)}
         )
@@ -120,15 +178,16 @@ async def _run_tools(state: AgentState, tool_calls: list[dict]) -> None:
         )
 
 
-async def run_agent(task: str) -> AgentState:
+async def run_agent(task: str, on_event: EventSink | None = None) -> AgentState:
     state = AgentState(
         task=task,
         messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": task}],
+        request_id=request_id.get(),
     )
     model = pick_model(task)
     started, error = time.monotonic(), None
     try:
-        return await _run(state, model)
+        return await _run(state, model, on_event or _no_events)
     except BaseException as exc:  # including cancellation when the client goes away
         error = type(exc).__name__
         raise
@@ -136,11 +195,12 @@ async def run_agent(task: str) -> AgentState:
         await audit.record(state, model, time.monotonic() - started, error)
 
 
-async def _run(state: AgentState, model: str) -> AgentState:
+async def _run(state: AgentState, model: str, emit: EventSink = _no_events) -> AgentState:
     try:
         async with asyncio.timeout(TIMEOUT_S):
             while state.steps < MAX_STEPS:
                 state.steps += 1
+                await emit({"type": "step", "step": state.steps})
                 allow_tools = len(state.tool_calls) < MAX_TOOL_CALLS
                 message = await complete_with_tools(
                     state.messages, tools=TOOL_SCHEMAS if allow_tools else None, model=model
@@ -149,8 +209,21 @@ async def _run(state: AgentState, model: str) -> AgentState:
 
                 tool_calls = message.get("tool_calls") or []
                 if not tool_calls:
-                    return _finish(state, "done", message.get("content") or "", done=True)
-                await _run_tools(state, tool_calls)
+                    answer = message.get("content") or ""
+                    if _should_repair(state, answer):
+                        verdict, unsupported = _verdict(state, answer)
+                        state.repairs += 1
+                        await emit(
+                            {
+                                "type": "repair",
+                                "ungrounded": verdict["ungrounded"],
+                                "unsupported": [u["identifier"] for u in unsupported],
+                            }
+                        )
+                        state.messages.append({"role": "user", "content": repair_prompt(verdict, unsupported)})
+                        continue
+                    return _finish(state, "done", answer, done=True)
+                await _run_tools(state, tool_calls, emit)
     except TimeoutError:
         return _finish(state, "timeout", "I ran out of time gathering information for this task.")
 
