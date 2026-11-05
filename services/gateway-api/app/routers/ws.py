@@ -11,6 +11,17 @@ from app.llm_client import build_prompt, stream_chat
 router = APIRouter(tags=["chat"])
 
 
+def _question(raw: str) -> str | None:
+    """The non-empty question in a client frame, or None if the frame is not
+    a JSON object carrying one."""
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    question = payload.get("question") if isinstance(payload, dict) else None
+    return question if isinstance(question, str) and question.strip() else None
+
+
 @router.websocket("/ws/chat")
 async def ws_chat(websocket: WebSocket) -> None:
     """Streaming chat over WebSocket. Auth token is passed as a query param
@@ -29,8 +40,20 @@ async def ws_chat(websocket: WebSocket) -> None:
     try:
         while True:
             raw = await websocket.receive_text()
-            payload = json.loads(raw)
-            question = payload.get("question", "")
+            # The handshake token is re-checked on every message: a socket can
+            # stay open for hours, and should not outlive the token's expiry.
+            try:
+                decode_token(token)
+            except HTTPException as exc:
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=exc.detail)
+                return
+            question = _question(raw)
+            if question is None:
+                # One bad frame is the client's error to fix, not a reason to drop the connection.
+                await websocket.send_json(
+                    {"type": "error", "detail": 'expected a JSON object like {"question": "..."}'}
+                )
+                continue
 
             try:
                 sources = await rag_client.search(question)

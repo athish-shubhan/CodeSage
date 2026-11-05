@@ -120,7 +120,7 @@ Ollama serves a quantized model (`llama3.1:8b-instruct-q4_0` by default) so the 
 
 ## Auth
 
-JWT, issued by `POST /token` against demo credentials. Swap for a real user store before this handles real users. REST calls send it as a Bearer header; the WebSocket sends it as a `?token=` query parameter, since browser WebSocket clients cannot set custom headers on the handshake.
+JWT, issued by `POST /token` against demo credentials. Swap for a real user store before this handles real users. REST calls send it as a Bearer header; the WebSocket sends it as a `?token=` query parameter, since browser WebSocket clients cannot set custom headers on the handshake. The token is checked again on every message, so a long-lived socket is closed (1008) once its token expires instead of staying authorized. A malformed frame (not JSON, not an object, no non-empty `question`) gets an `error` frame back and the socket stays open; it used to raise and drop the connection.
 
 ## Observability
 
