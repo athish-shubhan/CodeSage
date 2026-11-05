@@ -45,3 +45,47 @@ Branch `improve/round-1`, stacked on `reliability-layer` (athish-shubhan/CodeSag
 
 - The `retrieval-smoke` job (real embedder) cannot run in this environment; CI runs it.
 - A symlink's target is only checked at ingest and read time; a link that is retargeted between the two is checked again at read time, but an already-indexed chunk keeps its old content until the next ingest.
+
+## Round 2: batched ingest, request bounds and insecure-default warnings, bounded metric labels
+
+Branch `improve/round-2`, stacked on `improve/round-1` (athish-shubhan/CodeSage#2).
+
+### 1. Ingest sent every new chunk to Qdrant in one request
+
+**Found:** `pipeline.ingest` embedded all new chunks at once and upserted them in a single request. Measured on this repo's own chunks (504 chunks from 116 files, with 384-d vectors as all-MiniLM-L6-v2 produces): a point averages 8,862 bytes of JSON, so the whole ingest was one 4.5 MB request, and Qdrant's default 32 MB request limit (`service.max_request_size_mb`) would be passed at about 3,800 chunks, roughly 870 files at this repo's density. Not reproduced against a Qdrant server here (none available); the limit is Qdrant's documented default.
+
+**Changed:** chunks are embedded and upserted in batches of about 256 points (~2.3 MB), never splitting a file across batches. That last part matters: with naive slicing, an ingest that dies between batches leaves a file half-written but already carrying its new hash, so the next ingest thinks it is unchanged and never writes the missing chunks.
+
+**Verified:** 3 new tests against embedded Qdrant: batch sizes and file-to-batch assignment, an oversized single file staying in one batch, and an ingest that crashes on its second batch being fully repaired by the next one. The two ingest tests fail against a naive slicing batcher and pass with the file-aligned one.
+
+### 2. Unbounded request sizes; shipped secrets used silently
+
+**Found:** `/chat`, `/agent`, and `/ws/chat` accepted a question or task of any length and passed it to retrieval and the LLM, and `top_k` was unbounded (retrieval only fetches 20 candidates per strategy, so more never helps). The gateway also started without comment with the default `GATEWAY_JWT_SECRET` (which lets anyone who reads the repo sign valid tokens) and the `admin`/`admin` demo login.
+
+**Changed:** questions and tasks over `GATEWAY_MAX_QUESTION_CHARS` (16,000 characters by default, about 4,000 tokens) and `top_k` outside 1-50 are rejected with 422 before any downstream call; the WebSocket answers with an error frame and stays open. At startup the gateway logs one warning per setting still at its shipped value. Defaults are unchanged: nothing is refused, only reported.
+
+**Verified:** 8 new tests (oversized question, `top_k` 0 and 51, a question exactly at the limit accepted, oversized agent task, oversized WebSocket question, warnings reported and cleared, startup logging); each rejected case asserts no downstream call was made.
+
+### 3. Model output controlled a Prometheus label; malformed tool arguments got a misleading error
+
+**Found:** `agent_tool_calls_total{tool}` used the tool name from the model's reply as its label. Reproduced: one run with five invented tool names created five new series. A model that hallucinates names, or is steered by injected text, can grow the series count without bound. Separately, tool arguments that were not valid JSON were silently replaced with `{}`, so the model was told `query: field required` about arguments it did send.
+
+**Changed:** names outside the three real tools are counted as `unknown`. Arguments that are not a JSON object get `Invalid arguments for <tool>: arguments must be a JSON object.` and the tool is not called.
+
+**Verified:** 2 new tests.
+
+### Results
+
+| Suite | Before (round 1) | After |
+|---|---|---|
+| gateway-api | 85 | 95 passed |
+| retrieval-service | 54 | 57 passed |
+| integration | 5 | 5 passed |
+| eval | 29 | 29 passed |
+| agent eval gate | passed | passed (36/36, detector 0.90 / 0.78, unchanged) |
+| ruff 0.14.0 | clean | clean |
+
+### Not done
+
+- The 32 MB limit and the batch size were not exercised against a real Qdrant server here; CI's `retrieval-smoke` job uses one but only ingests 4 files.
+- Request limits are per request, not per user; there is still no rate limiting in the gateway (Traefik is the documented place for it).

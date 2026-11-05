@@ -61,6 +61,8 @@ _REGISTRY: dict[str, tuple[type[BaseModel], object]] = {
     "get_file": (GetFileArgs, get_file),
 }
 
+TOOL_NAMES = frozenset(_REGISTRY)
+
 TOOL_SCHEMAS = [
     {
         "type": "function",

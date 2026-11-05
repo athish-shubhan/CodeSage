@@ -1,10 +1,14 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from app.config import settings
+
+MAX_TOP_K = 50  # retrieval-service fetches 20 candidates per strategy, so more than this cannot help
 
 
 class ChatRequest(BaseModel):
-    question: str
+    question: str = Field(max_length=settings.max_question_chars)
     collection: str | None = None
-    top_k: int | None = None
+    top_k: int | None = Field(default=None, ge=1, le=MAX_TOP_K)
 
 
 class ChatResponse(BaseModel):

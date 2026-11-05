@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
@@ -5,12 +6,17 @@ from fastapi.security import OAuth2PasswordRequestForm
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app import llm_client, rag_client
-from app.auth import login_for_token
+from app.auth import insecure_defaults, login_for_token
 from app.config import settings
 from app.routers import agent, chat, ingest, ws
 
+log = logging.getLogger("gateway-api")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    for problem in insecure_defaults():
+        log.warning("insecure default: %s; set it before exposing this gateway", problem)
     yield
     await rag_client.close()
 

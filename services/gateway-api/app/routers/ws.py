@@ -6,20 +6,22 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, We
 
 from app import rag_client
 from app.auth import decode_token
+from app.config import settings
 from app.llm_client import build_prompt, stream_chat
 
 router = APIRouter(tags=["chat"])
 
 
 def _question(raw: str) -> str | None:
-    """The non-empty question in a client frame, or None if the frame is not
-    a JSON object carrying one."""
+    """The question in a client frame, or None if the frame is not a JSON
+    object carrying a non-empty one within the size limit /chat also applies."""
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
         return None
     question = payload.get("question") if isinstance(payload, dict) else None
-    return question if isinstance(question, str) and question.strip() else None
+    ok = isinstance(question, str) and question.strip() and len(question) <= settings.max_question_chars
+    return question if ok else None
 
 
 @router.websocket("/ws/chat")
@@ -51,7 +53,8 @@ async def ws_chat(websocket: WebSocket) -> None:
             if question is None:
                 # One bad frame is the client's error to fix, not a reason to drop the connection.
                 await websocket.send_json(
-                    {"type": "error", "detail": 'expected a JSON object like {"question": "..."}'}
+                    {"type": "error", "detail": 'expected a JSON object like {"question": "..."} '
+                     f"with at most {settings.max_question_chars} characters"}
                 )
                 continue
 
