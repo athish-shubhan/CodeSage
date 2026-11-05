@@ -22,6 +22,7 @@ import json
 import time
 from collections.abc import Awaitable, Callable
 
+from app import request_id
 from app.agent import audit, citations, untrusted
 from app.agent.model_router import pick_model
 from app.agent.state import AgentState, InjectionFlag, ToolCallRecord
@@ -181,6 +182,7 @@ async def run_agent(task: str, on_event: EventSink | None = None) -> AgentState:
     state = AgentState(
         task=task,
         messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": task}],
+        request_id=request_id.get(),
     )
     model = pick_model(task)
     started, error = time.monotonic(), None

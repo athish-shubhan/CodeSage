@@ -7,9 +7,12 @@ this service over gRPC.
 """
 from __future__ import annotations
 
+import contextvars
+import functools
 import json
 import logging
 import os
+import time
 from concurrent import futures
 
 import grpc
@@ -21,8 +24,39 @@ import context_expand
 import pipeline
 import vector_store
 
-logging.basicConfig(level=logging.INFO)
+# The gateway's request id, from x-request-id metadata: every log line an RPC
+# writes carries it, so one id finds a request in both services' logs.
+_request_id: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
+
+
+class _RequestIdFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = _request_id.get()
+        return True
+
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s [%(request_id)s] %(message)s")
+for _handler in logging.getLogger().handlers:
+    _handler.addFilter(_RequestIdFilter())
 log = logging.getLogger("retrieval-service")
+
+
+def _traced(method):
+    """Sets the request id for the duration of one RPC (each runs in a worker
+    thread, so it is reset afterwards) and logs the RPC with its duration."""
+
+    @functools.wraps(method)
+    def wrapper(self, request, context):
+        rid = dict(context.invocation_metadata() or ()).get("x-request-id", "-")
+        token = _request_id.set(rid[:128])
+        start = time.perf_counter()
+        try:
+            return method(self, request, context)
+        finally:
+            log.info("%s %.1f ms", method.__name__, (time.perf_counter() - start) * 1000)
+            _request_id.reset(token)
+
+    return wrapper
 
 GRPC_PORT = int(os.environ.get("GRPC_PORT", "50051"))
 METRICS_PORT = int(os.environ.get("METRICS_PORT", "9101"))
@@ -38,6 +72,7 @@ SEARCH_CANCELLED = Counter("retrieval_search_cancelled_total", "Searches stopped
 
 
 class RetrievalServicer(retrieval_pb2_grpc.RetrievalServicer):
+    @_traced
     def Search(self, request, context):
         try:
             return self._search(request, context)
@@ -84,6 +119,7 @@ class RetrievalServicer(retrieval_pb2_grpc.RetrievalServicer):
             abstained=result["abstained"],
         )
 
+    @_traced
     def IngestRepo(self, request, context):
         INGEST_REQUESTS.inc()
         try:
@@ -101,6 +137,7 @@ class RetrievalServicer(retrieval_pb2_grpc.RetrievalServicer):
             chunks_embedded=result.chunks_embedded,
         )
 
+    @_traced
     def ExpandContext(self, request, context):
         collection = request.collection or DEFAULT_COLLECTION
         pipeline.restore(collection)
@@ -113,6 +150,7 @@ class RetrievalServicer(retrieval_pb2_grpc.RetrievalServicer):
         )
         return retrieval_pb2.ExpandContextResponse(text=text or "", found=text is not None)
 
+    @_traced
     def GetFile(self, request, context):
         collection = request.collection or DEFAULT_COLLECTION
         pipeline.restore(collection)

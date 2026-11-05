@@ -38,7 +38,7 @@ def test_stream_reports_progress_then_the_checked_answer():
     with patch("app.agent.loop.complete_with_tools", new=AsyncMock(side_effect=_turns("Skips approval [payments.py:9-10]."))), patch(
         "app.agent.loop.call_tool", new=AsyncMock(return_value=FIXTURE)
     ):
-        resp = client.post("/agent/stream", headers=AUTH, json={"task": "safe?"})
+        resp = client.post("/agent/stream", headers={**AUTH, "X-Request-ID": "req-stream-1"}, json={"task": "safe?"})
 
     assert resp.status_code == 200 and resp.headers["content-type"].startswith("text/event-stream")
     events = _events(resp.text)
@@ -47,6 +47,7 @@ def test_stream_reports_progress_then_the_checked_answer():
     assert events[2]["injection_flags"] == 2 and events[2]["chars"] > 0
     answer = events[-1]
     assert answer["citations"]["grounded"] == ["payments.py:9-10"]
+    assert answer["request_id"] == resp.headers["x-request-id"] == "req-stream-1"
 
 
 def test_stream_reports_a_downstream_failure_as_an_error_event():

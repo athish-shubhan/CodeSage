@@ -28,6 +28,7 @@ class AgentResponse(BaseModel):
     citations: Citations
     injection_flags: list[InjectionFlag] = []  # instruction-like text removed from tool results
     repairs: int = 0  # citation-repair turns used (GATEWAY_AGENT_REPAIR_CITATIONS)
+    request_id: str | None = None  # also in the X-Request-ID response header and the audit log
 
 
 def _response(state) -> AgentResponse:
@@ -39,6 +40,7 @@ def _response(state) -> AgentResponse:
         citations=Citations(**state.citations, unsupported_identifiers=state.unsupported_identifiers),
         injection_flags=[asdict(f) for f in state.injection_flags],
         repairs=state.repairs,
+        request_id=state.request_id,
     )
 
 
@@ -82,7 +84,7 @@ async def agent_stream(req: AgentRequest, user: str = Depends(current_user)) -> 
             await queue.put(None)
 
     async def events():
-        task = asyncio.create_task(run())
+        task = asyncio.create_task(run())  # copies the context, so the request id comes along
         try:
             while (event := await queue.get()) is not None:
                 yield _sse(event)

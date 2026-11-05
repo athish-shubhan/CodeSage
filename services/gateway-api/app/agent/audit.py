@@ -34,6 +34,7 @@ _lock = threading.Lock()  # one writer at a time, so concurrent runs never inter
 def entry(state: AgentState, model: str, duration_s: float, error: str | None = None) -> dict:
     return {
         "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+        "request_id": state.request_id,
         "task_sha256": hashlib.sha256(state.task.encode("utf-8")).hexdigest(),
         "model": model,
         "steps": state.steps,

@@ -25,7 +25,7 @@ The model's turns are scripted, so this mode tests the gateway's checks, not a m
 | Removals recorded at the right file lines | 4/4 injection cases |
 | Citations to injected lines reported ungrounded | 4/4 injection cases |
 | Detector on `injection_sentences.jsonl`: precision / recall | 0.90 / 0.78 (18 of 23 injections caught, 2 of 20 benign sentences flagged) |
-| Detector flags on ordinary code and docs (46 files, 3339 lines) | 1 |
+| Detector flags on ordinary code and docs (47 files, 3597 lines) | 1 |
 
 | Answer metric | Replay (scripted answers) | Live LLM |
 |---|---|---|

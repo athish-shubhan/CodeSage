@@ -138,3 +138,22 @@ async def test_symlink_out_of_the_repo_is_neither_indexed_nor_readable_over_grpc
     assert all("hunter2" not in h["text"] for h in hits)
     assert await rag_client.get_file("leak.md", collection="symlinks") is None
     assert await rag_client.expand_context("leak.md", 1, 1, collection="symlinks") is None
+
+
+async def test_request_id_reaches_retrieval_service_over_grpc(gateway, monkeypatch):
+    import server
+
+    from app import request_id
+
+    await rag_client.ingest_repo(FIXTURE_REPO)
+    seen = []
+    real_search = server.pipeline.search
+    monkeypatch.setattr(server.pipeline, "search", lambda **kw: (seen.append(server._request_id.get()), real_search(**kw))[1])
+
+    token = request_id._current.set("req-e2e-42")
+    try:
+        await rag_client.search("WIDGET_API_TOKEN_HEADER")
+    finally:
+        request_id._current.reset(token)
+    assert seen == ["req-e2e-42"]
+    assert server._request_id.get() == "-"  # reset after the RPC
