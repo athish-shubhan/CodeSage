@@ -260,3 +260,13 @@ Branch `improve/round-6`, stacked on `improve/round-5` (athish-shubhan/CodeSage#
 
 - Ingest serialization is per process, not across replicas.
 - The live column of the eval report still has not been run: no model weights are reachable from this environment (Hugging Face, the Ollama registry and GitHub releases are blocked by the proxy).
+
+## Round 7: non-root containers, images started in CI
+
+Branch `improve/round-7`, stacked on `improve/round-6` (athish-shubhan/CodeSage#7).
+
+### 1. Both service images ran as root
+
+**Found:** neither Dockerfile set a user, so `gateway-api` and `retrieval-service` ran as root in compose and k8s, and the k8s manifests had no `securityContext`. Both services index or serve repository content that is not trusted (ADR 0006), which is exactly where a process should not hold root.
+
+**Changed:** both images create and switch to uid 10001 with a home directory (the embedding model downloads into `~/.cache/huggingface` at first use; nothing writes under `/app`). The k8s Deployments set `runAsNonRoot: true`, `runAsUser: 10001`, `allowPrivilegeEscalation: false` and drop all capabilities.

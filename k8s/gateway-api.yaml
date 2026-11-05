@@ -11,9 +11,16 @@ spec:
     metadata:
       labels: { app: gateway-api }
     spec:
+      # The image runs as uid 10001 (see its Dockerfile); refuse to start it as root.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
       containers:
         - name: gateway-api
           image: codesage/gateway-api:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
           ports:
             - containerPort: 8000
           env:
