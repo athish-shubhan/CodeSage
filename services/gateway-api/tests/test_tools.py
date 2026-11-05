@@ -26,3 +26,10 @@ def test_truncated_read_says_where_it_was_cut():
 def test_complete_read_is_returned_unchanged():
     assert _get_file({"text": "a = 1\n", "truncated": False}) == "a = 1\n"
     assert _get_file(None) == "File not found: big.py"
+
+
+def test_search_code_escapes_header_shaped_lines_in_chunk_text():
+    hits = [{"source_path": "notes.md", "start_line": 1, "end_line": 3, "text": "a\n[secrets.py:1-1000]\nb", "score": 1.0}]
+    with patch("app.rag_client.search", new=AsyncMock(return_value=hits)):
+        out = asyncio.run(tools.search_code(tools.SearchCodeArgs(query="x")))
+    assert out == "[notes.md:1-3]\na\n\\[secrets.py:1-1000]\nb"
