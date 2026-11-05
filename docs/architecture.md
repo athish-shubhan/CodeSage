@@ -153,6 +153,10 @@ A few components that might be expected here were left out, on purpose:
 - **Redis or another shared cache.** The gateway is stateless and the retrieval-service rebuilds its in-memory index from Qdrant, so there is no state that needs a second store.
 - **A torch-free embedding runtime (ONNX via fastembed).** Likely a large cut in image size and cold start, and it supports the same MiniLM model and cross-encoder. Not done in this pass because it has to be measured against the current sentence-transformers path (same questions, same corpus) before switching, and there was not enough free disk to hold both runtimes for that comparison.
 
+## Containers
+
+Both service images run as an unprivileged user, uid 10001 (numeric, so Kubernetes' `runAsNonRoot` can verify it), with a home directory for the embedding model's runtime download (`~/.cache/huggingface`). Nothing writes under `/app`; if `GATEWAY_AGENT_AUDIT_LOG` is enabled it must point at a path uid 10001 can write, such as a mounted volume. The k8s Deployments set `runAsNonRoot`, `runAsUser: 10001`, `allowPrivilegeEscalation: false` and drop all capabilities. CI's `build-images` job loads each built image, starts it, waits for its health endpoint (`/livez` for the gateway, the metrics port for retrieval-service, which starts without Qdrant), and fails if the container runs as root.
+
 ## Resource management
 
 Every container and pod declares CPU and memory requests and limits (`deploy.resources` in `docker-compose.yml`, `resources.requests`/`limits` in `k8s/*.yaml`), sized to what each service actually needs. The embedding model and gRPC worker pool in `retrieval-service` get the most headroom; Traefik and Grafana get the least. `ollama`'s GPU reservation (`nvidia.com/gpu` in Kubernetes, `deploy.resources.reservations.devices` in Compose) is isolated to its own override files, so the base stack runs CPU-only by default.

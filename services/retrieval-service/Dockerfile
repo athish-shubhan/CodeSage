@@ -33,4 +33,10 @@ ENV GRPC_PORT=50051 \
 
 EXPOSE 50051 9101
 
+# Run as an unprivileged user. Numeric, so Kubernetes' runAsNonRoot can verify
+# it; with a home directory, so the embedding model's runtime download
+# (~/.cache/huggingface) has somewhere writable to go. Nothing writes under /app.
+RUN useradd --create-home --uid 10001 --user-group app
+USER 10001
+
 CMD ["python", "server.py"]
