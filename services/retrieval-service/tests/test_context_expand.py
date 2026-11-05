@@ -66,3 +66,35 @@ def test_read_file_truncates_at_max_bytes(tmp_path):
 def test_read_file_rejects_path_traversal(tmp_path):
     context_expand.set_repo_root("t6", str(tmp_path))
     assert context_expand.read_file("t6", "../../etc/passwd") is None
+
+
+def _repo_with_links(tmp_path):
+    repo, outside = tmp_path / "repo", tmp_path / "outside"
+    repo.mkdir()
+    outside.mkdir()
+    (outside / "secret.txt").write_text("SECRET_KEY=hunter2\n")
+    (repo / "ok.py").write_text("def ok():\n    pass\n")
+    (repo / "leak.md").symlink_to(outside / "secret.txt")
+    (repo / "linkdir").symlink_to(outside, target_is_directory=True)
+    (repo / "alias.py").symlink_to(repo / "ok.py")  # a link that stays inside the repo
+    return repo
+
+
+def test_symlinks_out_of_the_repo_are_refused(tmp_path):
+    repo = _repo_with_links(tmp_path)
+    context_expand.set_repo_root("links", str(repo))
+
+    assert context_expand.read_file("links", "leak.md") is None
+    assert context_expand.read_file("links", "linkdir/secret.txt") is None
+    assert context_expand.expand("links", "leak.md", 1, 1) is None
+    assert context_expand.read_file("links", "alias.py")["text"].startswith("def ok")
+    assert context_expand.read_file("links", "ok.py")["text"].startswith("def ok")
+
+
+def test_repo_root_that_is_itself_a_symlink_still_works(tmp_path):
+    repo = _repo_with_links(tmp_path)
+    (tmp_path / "root-link").symlink_to(repo, target_is_directory=True)
+    context_expand.set_repo_root("rootlink", str(tmp_path / "root-link"))
+
+    assert context_expand.read_file("rootlink", "ok.py")["text"].startswith("def ok")
+    assert context_expand.read_file("rootlink", "leak.md") is None

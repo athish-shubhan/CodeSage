@@ -28,6 +28,10 @@ class RawChunk:
 
 
 def iter_source_files(repo_path: str, include_globs: list[str] | None = None):
+    # A symlinked file whose target is outside the repo is skipped: its name
+    # picks the extension, so `notes.md -> ~/.ssh/id_rsa` would otherwise be
+    # read and indexed. os.walk already does not descend symlinked directories.
+    real_root = os.path.realpath(repo_path)
     for root, dirs, files in os.walk(repo_path):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
         for fname in files:
@@ -35,6 +39,8 @@ def iter_source_files(repo_path: str, include_globs: list[str] | None = None):
             if ext not in TEXT_EXTENSIONS:
                 continue
             full = os.path.join(root, fname)
+            if not os.path.realpath(full).startswith(real_root + os.sep):
+                continue
             rel = os.path.relpath(full, repo_path)
             if include_globs and not any(_matches(rel, g) for g in include_globs):
                 continue
