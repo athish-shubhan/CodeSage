@@ -121,3 +121,20 @@ async def test_injected_fixture_comment_is_stripped_over_grpc(gateway):
     assert ("payments.py", 7, "addressed_to_ai") in flags and ("payments.py", 8, "ignore_instructions") in flags
     assert "AUDIT-OK-7731" not in state.tool_calls[0].result
     assert state.citations == {"grounded": ["payments.py:9-10"], "ungrounded": ["payments.py:7-8"]}
+
+
+async def test_symlink_out_of_the_repo_is_neither_indexed_nor_readable_over_grpc(gateway, tmp_path):
+    repo, outside = tmp_path / "repo", tmp_path / "outside"
+    repo.mkdir()
+    outside.mkdir()
+    (outside / "secret.txt").write_text("SECRET_KEY = 'hunter2'\n")
+    (repo / "ok.py").write_text("def ok():\n    return 1\n")
+    (repo / "leak.md").symlink_to(outside / "secret.txt")
+
+    result = await rag_client.ingest_repo(str(repo), collection="symlinks")
+    hits = await rag_client.search("SECRET_KEY hunter2", top_k=5, collection="symlinks")
+
+    assert result["files_indexed"] == 1
+    assert all("hunter2" not in h["text"] for h in hits)
+    assert await rag_client.get_file("leak.md", collection="symlinks") is None
+    assert await rag_client.expand_context("leak.md", 1, 1, collection="symlinks") is None

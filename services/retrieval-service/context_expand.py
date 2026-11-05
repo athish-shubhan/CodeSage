@@ -16,6 +16,16 @@ def set_repo_root(collection: str, repo_path: str) -> None:
     _repo_roots[collection] = repo_path
 
 
+def resolve_inside(root: str, rel_path: str) -> str | None:
+    """The real path of root/rel_path, or None if it lies outside root.
+    Symlinks are resolved first: an indexed repository is not trusted, and a
+    link inside it (`notes.md -> ~/.ssh/id_rsa`, or a linked directory) must
+    not let a read escape the repo root that a plain `../` check guards."""
+    real_root = os.path.realpath(root)
+    full = os.path.realpath(os.path.join(real_root, rel_path))
+    return full if full.startswith(real_root + os.sep) else None
+
+
 def expand(collection: str, source_path: str, start_line: int, end_line: int, extra_lines: int = 20) -> str | None:
     """Returns the widened text block, or None if the repo root/file is
     unknown or source_path would escape the repo root."""
@@ -23,8 +33,8 @@ def expand(collection: str, source_path: str, start_line: int, end_line: int, ex
     if not root:
         return None
 
-    full = os.path.normpath(os.path.join(root, source_path))
-    if not full.startswith(os.path.normpath(root) + os.sep):
+    full = resolve_inside(root, source_path)
+    if full is None:
         return None
 
     try:
@@ -46,8 +56,8 @@ def read_file(collection: str, source_path: str, max_bytes: int = 20_000) -> dic
     if not root:
         return None
 
-    full = os.path.normpath(os.path.join(root, source_path))
-    if not full.startswith(os.path.normpath(root) + os.sep):
+    full = resolve_inside(root, source_path)
+    if full is None:
         return None
 
     try:

@@ -61,3 +61,19 @@ def test_chunk_repo_counts_files_and_chunks(tmp_path):
 
     assert files_seen == 2
     assert len(chunks) == 2  # each small file fits in a single chunk
+
+
+def test_ingest_scan_skips_symlinks_that_leave_the_repo(tmp_path):
+    from chunking import iter_source_files
+
+    repo, outside = tmp_path / "repo", tmp_path / "outside"
+    repo.mkdir()
+    outside.mkdir()
+    (outside / "secret.txt").write_text("SECRET_KEY=hunter2\n")
+    (outside / "lib.py").write_text("x = 1\n")
+    (repo / "ok.py").write_text("y = 2\n")
+    (repo / "leak.md").symlink_to(outside / "secret.txt")
+    (repo / "linkdir").symlink_to(outside, target_is_directory=True)
+    (repo / "alias.py").symlink_to(repo / "ok.py")
+
+    assert sorted(rel for _, rel in iter_source_files(str(repo))) == ["alias.py", "ok.py"]

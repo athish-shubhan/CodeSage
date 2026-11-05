@@ -24,3 +24,35 @@ def test_build_prompt_handles_no_context_gracefully():
 
     assert "no matching context found" in prompt
     assert "What is this?" in prompt
+
+
+def _sse_client(lines):
+    """httpx.AsyncClient whose transport answers every request with these SSE lines."""
+    import httpx
+
+    body = "".join(f"{line}\n\n" for line in lines).encode()
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, content=body))
+    real = httpx.AsyncClient
+    return lambda **kw: real(transport=transport, **kw)
+
+
+def test_stream_chat_skips_chunks_with_no_choices():
+    import asyncio
+    import json
+    from unittest.mock import patch
+
+    from app import llm_client
+
+    lines = [
+        "data: " + json.dumps({"choices": [{"delta": {"content": "Hel"}}]}),
+        "data: " + json.dumps({"choices": [{"delta": {"content": "lo"}}]}),
+        "data: " + json.dumps({"choices": [{"delta": {}, "finish_reason": "stop"}]}),
+        "data: " + json.dumps({"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 2}}),
+        "data: [DONE]",
+    ]
+
+    async def collect():
+        return [t async for t in llm_client.stream_chat("hi")]
+
+    with patch("app.llm_client.httpx.AsyncClient", new=_sse_client(lines)):
+        assert asyncio.run(collect()) == ["Hel", "lo"]

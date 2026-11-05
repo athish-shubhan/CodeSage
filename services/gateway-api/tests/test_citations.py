@@ -138,3 +138,16 @@ def test_function_name_is_backed_by_the_def_line_enclosing_the_cited_body():
     calls = [ToolCallRecord("get_file", {"source_path": "p.py"}, source)]
     assert unsupported_identifiers("`Pay.refund` returns a bool [p.py:13].", calls) == []
     assert [u["identifier"] for u in unsupported_identifiers("`charge` returns a bool [p.py:13].", calls)] == ["charge"]
+
+
+def test_truncated_get_file_grounds_only_the_lines_it_showed():
+    from app.agent.citations import truncation_notice
+
+    shown = "\n".join(f"x{i} = {i}" for i in range(1, 101))
+    calls = [ToolCallRecord("get_file", {"source_path": "big.py"}, shown + truncation_notice(100))]
+    assert check("[big.py:99-100] [big.py:100-140] [big.py:4000-4001]", calls) == {
+        "grounded": ["big.py:99-100", "big.py:100-140"],
+        "ungrounded": ["big.py:4000-4001"],
+    }
+    # an untruncated read still grounds the whole file, as before
+    assert check("[big.py:4000]", [ToolCallRecord("get_file", {"source_path": "big.py"}, shown)])["grounded"]
