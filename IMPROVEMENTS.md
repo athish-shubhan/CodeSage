@@ -190,3 +190,11 @@ Branch `improve/round-5`, stacked on `improve/round-4` (athish-shubhan/CodeSage#
 **Changed:** both paths raise `MalformedLLMResponse`, a subclass of `httpx.HTTPError`, so every existing handler maps it to 502 with `LLM backend unavailable (malformed response)` (the body goes to the server log).
 
 **Verified:** 6 new tests (four bodies on `/agent`, two stream chunks on `/chat`); all six fail on the old code.
+
+### 2. The `/chat` guard was not in the CI eval gate
+
+**Found:** Round 4 added the injection guard and citation checks to `/chat` but left them out of `eval/agent_eval.py`, so the `agent-eval` gate only covered `/agent`.
+
+**Changed:** cases can set `"path": "chat"`; they run the real `/chat` handler with fixture-backed retrieval and a scripted (replay) or real (live) LLM stream, and are scored the same way. Two cases added: the injected `payments.py` chunk, and an answer citing a file it was never shown.
+
+**Verified:** replay now passes 45/45 label checks (was 36/36) across 11 cases; injection cases 4/4 stripped, flagged at the right lines, and uncitable. A new test shows the `/chat` case fails with sanitizing disabled. Replay answer rates moved because two scripted answers were added (grounded-citation rate 0.56 over 16 citations, unsupported-identifier rate 0.26 over 19 identifiers, abstention accuracy 0.91 over 11 cases); as before, those rates describe the scripts, not a model.
