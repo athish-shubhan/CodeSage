@@ -14,9 +14,24 @@ class AgentRequest(BaseModel):
     task: str
 
 
+class UnsupportedIdentifier(BaseModel):
+    identifier: str  # a code name or path the answer attributes to the citations below
+    citations: list[str]  # "path:start-end"; none of their tool text contains the identifier
+
+
 class Citations(BaseModel):
     grounded: list[str]  # "path:start-end" backed by a tool result in this run
-    ungrounded: list[str]  # cited by the model, never shown to it by a tool
+    ungrounded: list[str]  # cited by the model, never shown to it by a tool (or only as removed text)
+    unsupported_identifiers: list[UnsupportedIdentifier] = []
+
+
+class InjectionFlag(BaseModel):
+    tool: str
+    rule: str  # which app/agent/untrusted.py rule matched
+    text: str  # the removed sentence (truncated)
+    source_path: str | None = None
+    start_line: int | None = None
+    end_line: int | None = None
 
 
 class AgentResponse(BaseModel):
@@ -25,6 +40,7 @@ class AgentResponse(BaseModel):
     stopped_reason: str
     tool_calls: list[dict]
     citations: Citations
+    injection_flags: list[InjectionFlag] = []  # instruction-like text removed from tool results
 
 
 @router.post("", response_model=AgentResponse)
@@ -44,5 +60,6 @@ async def agent(req: AgentRequest, user: str = Depends(current_user)) -> AgentRe
         steps=state.steps,
         stopped_reason=state.stopped_reason or "unknown",
         tool_calls=[asdict(tc) for tc in state.tool_calls],
-        citations=Citations(**state.citations),
+        citations=Citations(**state.citations, unsupported_identifiers=state.unsupported_identifiers),
+        injection_flags=[asdict(f) for f in state.injection_flags],
     )

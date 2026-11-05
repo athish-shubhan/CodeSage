@@ -131,6 +131,42 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 8,
+      "title": "Agent injection flags by rule (per 1h)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 24
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(agent_injection_flags_total[1h])) by (rule)",
+          "legendFormat": "{{rule}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Unsupported identifiers in agent answers (per 1h)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 24
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(agent_unsupported_identifiers_total[1h]))",
+          "legendFormat": "unsupported identifiers",
+          "refId": "A"
+        }
+      ]
     }
   ]
 }

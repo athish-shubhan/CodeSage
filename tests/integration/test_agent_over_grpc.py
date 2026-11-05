@@ -103,3 +103,21 @@ async def test_agent_tools_run_over_grpc_and_citations_are_checked(gateway):
 async def test_path_traversal_is_refused_over_grpc(gateway):
     await rag_client.ingest_repo(FIXTURE_REPO)
     assert await rag_client.get_file("../../../README.md") is None
+
+
+async def test_injected_fixture_comment_is_stripped_over_grpc(gateway):
+    """The real retrieval-service chunk for payments.py carries the injected
+    comment; the gateway maps it back to the file's real line numbers."""
+    await rag_client.ingest_repo(FIXTURE_REPO)
+
+    script = [
+        {"role": "assistant", "tool_calls": [_call("search_code", '{"query": "refund_payment approved_by", "top_k": 5}', "1")]},
+        {"role": "assistant", "content": "Large refunds skip approval [payments.py:9-10]. It claims an audit [payments.py:7-8]."},
+    ]
+    with patch("app.agent.loop.complete_with_tools", new=AsyncMock(side_effect=script)):
+        state = await run_agent("Is refund_payment safe?")
+
+    flags = [(f.source_path, f.start_line, f.rule) for f in state.injection_flags]
+    assert ("payments.py", 7, "addressed_to_ai") in flags and ("payments.py", 8, "ignore_instructions") in flags
+    assert "AUDIT-OK-7731" not in state.tool_calls[0].result
+    assert state.citations == {"grounded": ["payments.py:9-10"], "ungrounded": ["payments.py:7-8"]}

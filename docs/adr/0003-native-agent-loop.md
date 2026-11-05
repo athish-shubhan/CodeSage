@@ -13,7 +13,7 @@
 
 ## Decision
 
-A plain loop (`app/agent/loop.py`, under 120 lines) with three hard bounds: `MAX_STEPS=4`, `MAX_TOOL_CALLS=6`, and a `TIMEOUT_S=60` deadline enforced with `asyncio.timeout` around the whole run.
+A plain loop (`app/agent/loop.py`, under 120 lines when this was written; about 150 after 0006 added tool-output sanitizing and the audit hook) with three hard bounds: `MAX_STEPS=4`, `MAX_TOOL_CALLS=6`, and a `TIMEOUT_S=60` deadline enforced with `asyncio.timeout` around the whole run.
 
 ## Why
 

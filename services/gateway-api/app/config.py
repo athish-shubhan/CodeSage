@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     # below this. 0 disables it (the default); pick a value with eval/abstention.py.
     retrieval_min_score: float = 0.0
 
+    # Append one JSON line per /agent run to this file (see app/agent/audit.py).
+    # Empty (the default) disables the audit log.
+    agent_audit_log: str = ""
+
     # demo credentials for the JWT /token endpoint; swap for a real user
     # store (Postgres, an IdP, etc.) before this ever handles real users.
     demo_username: str = "admin"

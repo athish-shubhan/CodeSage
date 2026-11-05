@@ -105,6 +105,37 @@ jobs:
       - name: Run eval harness unit tests
         run: cd eval && python -m pytest tests/ -q
 
+  agent-eval:
+    # Blocking gate for the /agent reliability layer: injection guard,
+    # citation grounding, unsupported identifiers, and abstention scoring,
+    # on the real agent loop with scripted model turns and tools served from
+    # eval/fixture/repo. No LLM, Qdrant, or torch needed.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: services/gateway-api/requirements.txt
+      - name: Install dependencies
+        run: pip install -r services/gateway-api/requirements.txt $PYTEST
+      - name: Generate gRPC stubs
+        run: |
+          python -m grpc_tools.protoc -I services/retrieval-service/proto \
+            --python_out=eval --grpc_python_out=eval \
+            services/retrieval-service/proto/retrieval.proto
+      - name: Run agent eval unit tests
+        run: cd eval && python -m pytest tests/test_agent_eval.py -q
+      - name: Run agent reliability eval (blocking gate)
+        run: python eval/agent_eval.py --gate --report "$RUNNER_TEMP/agent_eval.md"
+      - name: Write job summary
+        if: always()
+        run: |
+          [ -s "$RUNNER_TEMP/agent_eval.md" ] || exit 0
+          cat "$RUNNER_TEMP/agent_eval.md" >> "$GITHUB_STEP_SUMMARY"
+
   retrieval-smoke:
     # Blocking CI gate for the Context Engineer story: ingests a tiny fixed
     # fixture corpus into a real retrieval-service + Qdrant and asserts
