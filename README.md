@@ -77,7 +77,9 @@ CI (GitHub Actions) runs lint, all test suites, the agent reliability gate (bloc
 
 ## Demo
 
-<!-- DEMO -->
+![Demo](docs/demo.gif)
+
+*`make demo`: ingests the fixture repo, streams a local-model answer, and shows the injection guard removing planted instruction-like text.*
 
 ## Design decisions
 
