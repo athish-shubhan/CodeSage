@@ -1,58 +1,83 @@
 # CodeSage
 
-CodeSage is a coding assistant that answers questions about a codebase. It indexes a repository, retrieves relevant chunks for a question, and generates an answer with file and line citations, using a local LLM rather than a hosted API.
+[![CI](https://github.com/athish-shubhan/CodeSage/actions/workflows/ci.yml/badge.svg)](https://github.com/athish-shubhan/CodeSage/actions/workflows/ci.yml)
 
-It has three parts that work together:
+A local-LLM coding assistant: index a repository, ask a question, get a streamed answer with `[file:start-end]` citations that are checked against what was actually retrieved. Retrieval is hybrid (dense vectors + BM25, optional cross-encoder rerank), the LLM runs locally behind an OpenAI-compatible API (Ollama, vLLM or llama.cpp), and nothing leaves your machine.
 
-- A retrieval pipeline that combines vector search and keyword search, with optional reranking and an evaluation harness to measure whether each piece actually helps.
-- A bounded agent loop that can call tools (search the code, pull more context, read a whole file) across a few steps before answering, instead of a single retrieve-then-answer pass.
-- A small deployment stack around both: gRPC between services, JWT auth, an API gateway, metrics, Docker Compose and Kubernetes manifests, and support for three different local LLM backends.
+Why it exists: code Q&A tools tend to cite lines they never saw and will follow instructions planted in the repo they read. CodeSage treats retrieved text as untrusted, verifies every citation, and ships an eval gate in CI so those checks cannot silently regress.
 
-## How it works
+## Quick start (8 GB Apple Silicon Mac, no Docker)
 
-1. A question comes in over REST, WebSocket, or the agent endpoint.
-2. `gateway-api` calls `retrieval-service` over gRPC. By default it searches a vector index (Qdrant); it can also fuse in a keyword index (BM25) and rerank with a cross-encoder, both off by default because they measured no better than dense search alone on this corpus (see `docs/evaluation.md`). Either way, it assembles a token-budgeted context without cutting any chunk in half.
-3. The context and question go to a local LLM: Ollama, vLLM, or llama.cpp, chosen by an environment variable, all behind one client that speaks the OpenAI-compatible chat completions API.
-4. The answer streams back with citations in `[file:start-end]` format.
-
-The agent endpoint (`POST /agent`) adds a loop on top of this: the model can call `search_code`, `expand_context`, or `get_file` up to a few times before producing a final answer, bounded by a step limit, a tool-call limit, and a hard deadline. Every citation in the final answer is checked against what the tools actually returned in that run, and the response lists which citations are grounded and which the model made up. Tool output is treated as untrusted data: sentences in it that read like instructions to the model are removed before it sees them and reported in the response, and the answer's code identifiers are checked against the cited text. Each run can optionally be appended to a JSON-lines audit log (`GATEWAY_AGENT_AUDIT_LOG`). `POST /agent/stream` runs the same loop as server-sent progress events, an opt-in citation-repair turn (`GATEWAY_AGENT_REPAIR_CITATIONS`) lets the model fix answers that fail the checks, and an `X-Request-ID` follows each request through both services' logs.
-
-Ingestion is incremental: each chunk records a hash of its file, so re-indexing a repository only re-embeds files that changed and deletes chunks of files that were removed. Qdrant is the only durable store; the in-memory keyword index is rebuilt from it after a restart.
-
-## Stack
-
-| Concern | Choice |
-|---|---|
-| Backend | Python, FastAPI |
-| Internal RPC | gRPC (`proto/retrieval.proto`) |
-| Client protocols | REST (`/chat`, `/agent`), WebSocket (`/ws/chat`) |
-| Retrieval | Qdrant (dense, default), optional bm25s (lexical) fusion and cross-encoder rerank |
-| Agent | A small bounded tool-calling loop, no agent framework |
-| Local LLM serving | Ollama, vLLM, or llama.cpp behind one OpenAI-compatible client |
-| API gateway | Traefik |
-| Auth | JWT |
-| Monitoring | Prometheus + Grafana |
-| Containers | Docker Compose and Kubernetes manifests, with resource limits and health-gated startup |
-| Cloud deploy | Single-VM scripts for AWS, GCP, Azure |
-| CI | GitHub Actions: unit tests, a retrieval quality gate, Docker builds, Compose/k8s validation |
-
-## Running it
+Prerequisites: Python 3.10+ and [Ollama](https://ollama.com).
 
 ```bash
-cp .env.example .env
-make up                 # docker compose up -d --build
-make pull-model          # ollama pull llama3.1:8b-instruct-q4_0
-make ingest-self         # index this repo as the demo corpus
-make smoke               # curl through /healthz, /token, /chat
+git clone https://github.com/athish-shubhan/CodeSage && cd CodeSage
+make demo
 ```
 
-Then:
-- API: `http://localhost:8000` directly, or `http://localhost` through Traefik
-- Grafana: `http://localhost:3000` (`admin` / the value of `GRAFANA_ADMIN_PASSWORD`)
-- Prometheus: `http://localhost:9090`
-- Qdrant dashboard: `http://localhost:6333/dashboard`
+`make demo` creates `.venv`, starts the retrieval service (in-memory Qdrant) and the gateway, pulls `llama3.2:3b` (about 2 GB, 4-bit; override with `DEMO_MODEL=...`), ingests the 4-file `eval/fixture/repo`, asks "Does refund_payment require approval for large refunds?", and streams the answer over WebSocket with its citation check. The first run also downloads the 90 MB embedding model. The fixture contains a planted "ignore previous instructions" comment, so the output also shows the injection guard removing it.
 
-On a machine with an NVIDIA GPU, use `make up-gpu` instead of `make up`. To use vLLM or llama.cpp instead of Ollama: `make up-vllm` or `make up-llamacpp`. See `docs/architecture.md` for what each backend needs and what has actually been tested.
+If you prefer a hosted free tier over a local model, point `GATEWAY_LLM_BASE_URL`, `GATEWAY_LLM_MODEL` and `GATEWAY_LLM_API_KEY` at any OpenAI-compatible endpoint. The client speaks only that protocol; no hosted provider has been tested.
+
+Full stack (Traefik, Prometheus, Grafana, Qdrant server) with Docker: `cp .env.example .env && make up && make pull-model && make ingest-self && make smoke`. Set `LLM_MODEL=llama3.2:3b` in `.env` on small machines; the default is an 8B model.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    C[Client: REST / WebSocket / SSE] --> T[Traefik]
+    T --> G[gateway-api<br/>FastAPI, JWT, metrics]
+    G -- gRPC --> R[retrieval-service<br/>chunking, hybrid search, rerank]
+    R --> Q[(Qdrant)]
+    G -- OpenAI-compatible API --> L[Ollama / vLLM / llama.cpp]
+    G --> A[Agent loop<br/>search_code, expand_context, get_file]
+    A -. checks .-> K[Injection guard +<br/>citation grounding]
+    M[MCP adapter] -- gRPC --> R
+```
+
+- Retrieval: AST-aware chunking, dense search by default, optional BM25 fusion and cross-encoder rerank (both off by default because they did not pay off on the measured corpus, see Results). Ingestion is incremental and idempotent.
+- Endpoints: `POST /chat`, `WS /ws/chat` (token streaming), `POST /agent` (bounded tool-calling loop), `POST /agent/stream` (the same run as server-sent events).
+- Reliability: instruction-like sentences in retrieved text are removed and reported, citations are marked grounded or ungrounded, an opt-in repair turn lets the model fix bad citations, an audit log records agent runs, and one `X-Request-ID` follows a request through both services.
+- Hardening: non-root, read-only containers, request size limits, ingest restricted to allow-listed roots, internal addresses kept out of error responses.
+- Details: [docs/architecture.md](docs/architecture.md) and the [design records](docs/adr/); history of the nine improvement rounds in [IMPROVEMENTS.md](IMPROVEMENTS.md).
+
+## Results
+
+All numbers are from commands in [docs/results/README.md](docs/results/README.md) or from [docs/evaluation.md](docs/evaluation.md).
+
+| What | Result | Source |
+|---|---|---|
+| Retrieval, 22 questions on this repo (real embeddings, 2 CPUs) | Dense Recall@5 0.70 / MRR 0.51; hybrid 0.70 / 0.45; hybrid + rerank 0.80 / 0.49 at about 25x latency | `docs/evaluation.md` (`make eval`) |
+| Re-ingest of an unchanged repo (129 files, 637 chunks) | 0 chunks re-embedded; one edited file re-embeds 3 | `make bench-ingest` |
+| Shared vs per-call gRPC channel (1000 loopback calls) | p50 0.72 ms to 0.27 ms | `make bench-grpc` |
+| Injection guard, 43 labeled sentences | catches 18 of 23 injections, flags 2 of 20 benign; 1 flag in 47 ordinary files | `make eval-agent` |
+| Tests | gateway 137, retrieval 69, integration 6, eval 32 passing; ruff clean | `docs/results/README.md` |
+
+The default is dense-only retrieval because that is what the measurements support; the ablation is kept so a different corpus can overturn it.
+
+## Tests and evaluation
+
+```bash
+make test test-retrieval test-eval test-integration   # unit + gRPC integration, no Docker, LLM mocked
+make lint                                              # ruff
+make eval-agent                                        # injection / citation / abstention gate, no LLM
+make eval                                              # retrieval ablation (needs the stack and `make ingest-self`)
+```
+
+CI (GitHub Actions) runs lint, all test suites, the agent reliability gate (blocking), a retrieval-quality gate on a fixture corpus (blocking), the MCP adapter tests, image builds with non-root and read-only checks, and compose/k8s validation.
+
+## Limitations
+
+- Demo project, not a production service: one demo user from environment variables, a placeholder JWT secret you must change, no TLS, no multi-turn memory.
+- Retrieval benchmark is 22 questions on one corpus. Answer quality with a live model (grounded-citation rate, abstention) is not measured; the agent eval runs scripted model turns.
+- Small local models follow the tool-calling protocol unreliably (a 0.5B model did not; 3B and larger are not measured here). `/ws/chat` and `/chat` do not need tool calling and are what the quick start uses.
+- The quick start path with a real Ollama model was not run in the environment that prepared this repository; its client, gateway and retrieval path were exercised with a scripted LLM and a stand-in embedder.
+- The injection regex misses paraphrased, translated and obfuscated injections ([ADR 0006](docs/adr/0006-untrusted-tool-output.md)).
+- Only Ollama has been tested live for tool calling.
+
+## Demo
+
+<!-- DEMO -->
 
 ## Design decisions
 
@@ -64,29 +89,6 @@ Each of these is a short record of the options, what was chosen, and what it cos
 - [0004](docs/adr/0004-idempotent-incremental-ingestion.md) Idempotent, incremental ingestion with Qdrant as the only durable store
 - [0005](docs/adr/0005-in-process-tracing-not-opentelemetry.md) In-process trace spans and Prometheus, not OpenTelemetry yet
 - [0006](docs/adr/0006-untrusted-tool-output.md) Treat agent tool output as untrusted data
-
-## Measured results
-
-| What | Result | Source |
-|---|---|---|
-| Retrieval quality, 22 questions on this repo | Dense Recall@5 0.70, MRR 0.51; hybrid 0.70 / 0.45; hybrid + rerank 0.80 / 0.49 at ~25x latency | `docs/evaluation.md` |
-| Re-ingesting an unchanged repo (105 files, 353 chunks) | 0 chunks embedded (previously all 353, written as a duplicate copy of every point) | `scripts/bench_ingest.py`, ADR 0004 |
-| Re-ingesting after editing one file (README.md) | 3 chunks embedded | `scripts/bench_ingest.py` |
-| gRPC call overhead, new channel per call vs shared (loopback, 1000 calls) | p50 0.57 ms to 0.24 ms, p99 0.77 ms to 0.29 ms | `scripts/bench_grpc_channel.py` |
-| Agent injection guard on 43 labeled sentences | catches 18 of 23 injections, flags 2 of 20 benign sentences; 1 flag in 47 ordinary code/doc files (a README sentence describing this feature). Model behaviour (grounded-citation rate, abstention) not yet measured live | `eval/agent_eval.py`, ADR 0006 |
-
-## Tests and evaluation
-
-```bash
-make test              # gateway-api unit tests
-make test-retrieval    # retrieval-service unit tests
-make test-eval          # eval harness unit tests
-make test-integration   # gateway + retrieval-service over real gRPC, no Docker
-make eval               # retrieval evaluation: Recall@K, MRR, an ablation report
-make eval-agent         # agent reliability eval (injection guard, citations, abstention), no LLM needed
-```
-
-`make bench-grpc` and `make bench-ingest` run the two benchmarks above. The retrieval-service tests run ingestion and search against an embedded Qdrant (no server), with only the embedding model swapped for a deterministic stand-in. Unit tests, a small retrieval-quality gate, and the agent reliability gate also run in CI. See `docs/evaluation.md` for what the evaluation harness measures and what it found.
 
 ## Repository layout
 
@@ -103,18 +105,6 @@ deploy/aws, gcp, azure/ single-VM cloud deployment scripts
 docs/                   architecture, evaluation, and design decision records (adr/)
 scripts/                ingestion, quantization, smoke-test, and benchmark helpers
 ```
-
-## Status
-
-This is a demo project, not a production service. Known limitations:
-
-- Auth uses a single demo user from environment variables, and the default JWT secret is a placeholder you must override.
-- There is no TLS termination configured.
-- There is no multi-turn memory: each question is answered on its own.
-- The retrieval benchmark is 22 questions on one corpus, and only the Ollama backend has been tested live for tool calling.
-- A retrieval replica that has already built its keyword index will not see an ingest done through another replica until it restarts (this only affects the non-default hybrid and lexical modes).
-
-`docs/architecture.md` covers these where they matter.
 
 ## License
 

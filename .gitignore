@@ -8,3 +8,4 @@ venv/
 .DS_Store
 models/*.gguf
 .pytest_cache/
+.venv/

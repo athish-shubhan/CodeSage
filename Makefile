@@ -1,4 +1,9 @@
-.PHONY: up up-gpu up-vllm up-llamacpp down logs pull-model ingest-self lint test test-retrieval test-eval test-integration eval eval-agent smoke bench-grpc bench-ingest
+.PHONY: demo up up-gpu up-vllm up-llamacpp down logs pull-model ingest-self lint test test-retrieval test-eval test-integration eval eval-agent smoke bench-grpc bench-ingest
+
+# No-Docker demo (fits an 8 GB Mac): ingests eval/fixture/repo, asks a question,
+# streams a cited answer from a local Ollama model. See README "Quick start".
+demo:
+	bash scripts/demo.sh
 
 up:
 	docker compose up -d --build
