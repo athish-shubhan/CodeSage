@@ -1,6 +1,6 @@
 name: Eval ablation
 
-# The full 22-question hybrid/dense/lexical/rerank comparison against this
+# The full hybrid/dense/lexical/rerank comparison against this
 # repo's own content. Manual-trigger only: slower (real embedding model +
 # full corpus ingest), and not something every PR should block on.
 on:

@@ -163,7 +163,7 @@ jobs:
   retrieval-smoke:
     # Blocking CI gate for the Context Engineer story: ingests a tiny fixed
     # fixture corpus into a real retrieval-service + Qdrant and asserts
-    # Recall@K doesn't regress. The full 22-question ablation against this
+    # Recall@K doesn't regress. The full ablation against this
     # repo's own content is a separate manual workflow (eval-ablation.yml) --
     # slower, and not something every PR should block on.
     runs-on: ubuntu-24.04

@@ -44,4 +44,4 @@ python eval/agent_eval.py --gate --report eval/report.md   # or: make eval-agent
 
 ## Scale
 
-N=22 is a demo-scale benchmark on a roughly 95-file corpus, not a claim of statistical significance. The harness itself is corpus-agnostic: point `--collection` at a larger ingested repo and it scales. See `docs/evaluation.md` for what running it actually found.
+The recorded ablation used 22 questions (20 answerable); `qa_pairs.jsonl` now has 28 and the table has not been re-run. That is a demo-scale benchmark on a roughly 95-file corpus, not a claim of statistical significance. The harness itself is corpus-agnostic: point `--collection` at a larger ingested repo and it scales. See `docs/evaluation.md` for what running it actually found.

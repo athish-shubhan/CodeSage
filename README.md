@@ -47,13 +47,13 @@ All numbers are from commands in [docs/results/README.md](docs/results/README.md
 
 | What | Result | Source |
 |---|---|---|
-| Retrieval, 22 questions on this repo (real embeddings, 2 CPUs) | Dense Recall@5 0.70 / MRR 0.51; hybrid 0.70 / 0.45; hybrid + rerank 0.80 / 0.49 at about 25x latency | `docs/evaluation.md` (`make eval`) |
+| Retrieval, 22 questions (20 answerable) on this repo, one run, no intervals (real embeddings, 2 CPUs) | Dense Recall@5 0.70 / MRR 0.51; hybrid 0.70 / 0.45; hybrid + rerank 0.80 / 0.49 at about 25x latency | `docs/evaluation.md` (`make eval`) |
 | Re-ingest of an unchanged repo (129 files, 637 chunks) | 0 chunks re-embedded; one edited file re-embeds 3 | `make bench-ingest` |
 | Shared vs per-call gRPC channel (1000 loopback calls) | p50 0.72 ms to 0.27 ms | `make bench-grpc` |
 | Injection guard, 43 labeled sentences | catches 18 of 23 injections, flags 2 of 20 benign; 1 flag in 47 ordinary files | `make eval-agent` |
-| Tests | gateway 137, retrieval 69, integration 6, eval 32 passing; ruff clean | `docs/results/README.md` |
+| Tests | gateway 139, retrieval 71, integration 6, eval 32 passing; ruff clean | `docs/results/README.md` |
 
-The default is dense-only retrieval because that is what the measurements support; the ablation is kept so a different corpus can overturn it.
+The default is dense-only retrieval. With 20 answerable questions the strategies are not statistically distinguishable (0.70 vs 0.80 Recall@5 is 14 vs 16 questions, and 95% Wilson intervals for 14/20 and 16/20 overlap heavily at roughly 0.48 to 0.86 and 0.58 to 0.92), so the choice rests on simplicity and on hybrid not winning, not on a measured advantage. The recorded table is from the 22-question set of the initial commit; `eval/qa_pairs.jsonl` has since grown to 28 (6 more unanswerable questions) and the table has not been re-run, so it cannot be reproduced exactly from the current file.
 
 ## Tests and evaluation
 
@@ -69,9 +69,10 @@ CI (GitHub Actions) runs lint, all test suites, the agent reliability gate (bloc
 ## Limitations
 
 - Demo project, not a production service: one demo user from environment variables, a placeholder JWT secret you must change, no TLS, no multi-turn memory.
-- Retrieval benchmark is 22 questions on one corpus. Answer quality with a live model (grounded-citation rate, abstention) is not measured; the agent eval runs scripted model turns.
+- Retrieval benchmark is 22 questions (20 answerable) on one corpus, with no confidence intervals in the recorded table. Answer quality with a live model (grounded-citation rate, abstention) is not measured; the agent eval runs scripted model turns.
 - Small local models follow the tool-calling protocol unreliably (a 0.5B model did not; 3B and larger are not measured here). `/ws/chat` and `/chat` do not need tool calling and are what the quick start uses.
 - The quick start path with a real Ollama model was not run in the environment that prepared this repository; its client, gateway and retrieval path were exercised with a scripted LLM and a stand-in embedder.
+- The injection detector figures (18 of 23, 2 of 20) come from sentences and rules written by the same author, so they are a regression guard, not an estimate of real-world detection; the five known misses were kept in the set on purpose.
 - The injection regex misses paraphrased, translated and obfuscated injections ([ADR 0006](docs/adr/0006-untrusted-tool-output.md)).
 - Only Ollama has been tested live for tool calling.
 

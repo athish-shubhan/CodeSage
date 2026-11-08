@@ -11,8 +11,8 @@ deterministic hash stand-in (these runs measure pipeline behaviour, not embeddin
 
 | Command | Result |
 |---|---|
-| `make test` (gateway-api) | 137 passed, 1 skipped |
-| `make test-retrieval` | 69 passed |
+| `make test` (gateway-api) | 139 passed, 1 skipped |
+| `make test-retrieval` | 71 passed |
 | `make test-integration` | 6 passed |
 | `make test-eval` | 32 passed |
 | `ruff check .` (ruff 0.14.0) | all checks passed |

@@ -26,11 +26,11 @@ Dense by default. `strategy` and `use_reranker` on `SearchRequest` keep the othe
 | Hybrid | 0.70 | 0.45 | 760 ms |
 | Hybrid + rerank | 0.80 | 0.49 | 26018 ms |
 
-Hybrid tied dense on recall and lost on MRR. Reranking bought +0.10 recall for about 25x latency on CPU, which is not acceptable for an interactive request.
+Hybrid tied dense on recall and had a lower MRR; with 20 answerable questions neither gap is statistically meaningful, and hybrid was recorded as faster (760 vs 1056 ms, probably noise). Reranking bought +0.10 recall for about 25x latency on CPU, which is not acceptable for an interactive request.
 
 ## Trade-offs
 
-- The benchmark is small (22 questions, one corpus), so this is a default, not a law. A larger, more identifier-heavy corpus could flip it, which is why the ablation is a script and not a one-off.
+- The benchmark is small (22 questions, 20 answerable, one corpus; the question file has since grown to 28 and the table was not re-run), so this is a default, not a law. A larger, more identifier-heavy corpus could flip it, which is why the ablation is a script and not a one-off.
 - Keeping hybrid available means keeping the BM25 index and its restore logic, even though the default path does not use them.
 
 ## Consequences
