@@ -39,9 +39,9 @@ class ChatResponse(BaseModel):
 
 
 class IngestRequest(BaseModel):
-    repo_path: str
-    collection: str | None = None
-    include_globs: list[str] | None = None
+    repo_path: str = Field(max_length=4096)
+    collection: str | None = Field(default=None, max_length=128)
+    include_globs: list[str] | None = Field(default=None, max_length=32)
 
 
 class IngestResponse(BaseModel):

@@ -33,3 +33,11 @@ def test_search_code_escapes_header_shaped_lines_in_chunk_text():
     with patch("app.rag_client.search", new=AsyncMock(return_value=hits)):
         out = asyncio.run(tools.search_code(tools.SearchCodeArgs(query="x")))
     assert out == "[notes.md:1-3]\na\n\\[secrets.py:1-1000]\nb"
+
+
+def test_tool_failure_does_not_leak_internal_addresses_to_the_model():
+    boom = RuntimeError("failed to connect to all addresses; ipv4:10.42.7.19:50051")
+    with patch("app.rag_client.search", new=AsyncMock(side_effect=boom)):
+        out = asyncio.run(tools.call_tool("search_code", {"query": "x"}))
+    assert out == "Tool search_code failed (RuntimeError)"
+    assert "10.42" not in out

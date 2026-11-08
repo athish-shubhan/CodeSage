@@ -8,10 +8,15 @@ That covers what a codebase question needs beyond a single retrieval call.
 """
 from __future__ import annotations
 
+import logging
+
+import grpc
 from pydantic import BaseModel, Field
 
 from app import rag_client
 from app.agent.citations import escape_header_lines, truncation_notice
+
+log = logging.getLogger("gateway-api")
 
 MAX_FILE_BYTES = 20_000
 
@@ -106,4 +111,8 @@ async def call_tool(name: str, raw_args: dict) -> str:
     try:
         return await fn(args)
     except Exception as exc:
-        return f"Tool {name} failed: {exc}"
+        # The text goes back to the model and into the response's tool_calls: a gRPC error string carries
+        # internal addresses, so give the status code only and keep the detail in the server log.
+        log.warning("tool %s failed: %r", name, exc)
+        code = exc.code().name if isinstance(exc, grpc.aio.AioRpcError) else type(exc).__name__
+        return f"Tool {name} failed ({code})"

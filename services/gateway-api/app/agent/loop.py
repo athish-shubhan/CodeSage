@@ -148,7 +148,11 @@ async def _run_tools(state: AgentState, tool_calls: list[dict], emit: EventSink 
     budget = MAX_TOOL_CALLS - len(state.tool_calls)
     admitted, skipped = tool_calls[:budget], tool_calls[budget:]
 
-    parsed = [(tc["function"]["name"], _parse_args(tc["function"].get("arguments"))) for tc in admitted]
+    # A tool call without a function object (a misbehaving backend) becomes an "Unknown tool" result, not a 500.
+    parsed = [
+        ((tc.get("function") or {}).get("name") or "", _parse_args((tc.get("function") or {}).get("arguments")))
+        for tc in admitted
+    ]
     for name, args in parsed:
         await emit({"type": "tool_call", "name": name, "args": args if args is not None else {}})
     results = await asyncio.gather(*(_invoke(name, args) for name, args in parsed))

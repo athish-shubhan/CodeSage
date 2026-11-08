@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 import secrets
+import unicodedata
 from dataclasses import dataclass
 
 REMOVED_MARKER = "[removed: instruction-like text]"
@@ -105,7 +106,8 @@ class Removal:
 
 
 def _normalize(text: str) -> str:
-    return " ".join(_INVISIBLE_RE.sub("", text).split())
+    # NFKC first, so full-width and other compatibility look-alikes match the ASCII rules.
+    return " ".join(_INVISIBLE_RE.sub("", unicodedata.normalize("NFKC", text)).split())
 
 
 def _first_rule(text: str) -> str | None:
