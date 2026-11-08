@@ -79,7 +79,7 @@ CI (GitHub Actions) runs lint, all test suites, the agent reliability gate (bloc
 
 ![Demo](docs/demo.gif)
 
-*`make demo`: ingests the fixture repo, streams a local-model answer, and shows the injection guard removing planted instruction-like text.*
+*`make demo` with `llama3.2:3b` on an 8 GB M1: ingests the fixture repo, strips two planted instruction-like comments before they reach the model, and streams an answer that correctly spots the fixture's planted bug (large unapproved refunds return `True`). This small model emitted no `path:lines` citations, so both citation lists are empty; larger models cite more reliably.*
 
 ## Design decisions
 
