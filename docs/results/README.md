@@ -4,8 +4,8 @@ Every number in the top-level README comes from a command below or from `docs/ev
 Re-run the commands to reproduce; numbers move a little between machines.
 
 Environment for the runs in this directory: macOS 26 (Darwin 25.2), Apple M1 8 GB, Python 3.12.5,
-grpcio 1.66.2, qdrant-client 1.11.3 (embedded), no GPU, no LLM, embedding model replaced by a
-deterministic hash stand-in (these runs measure pipeline behaviour, not embedding quality).
+grpcio 1.66.2, qdrant-client 1.11.3 (embedded), no GPU. The test, ingest and gRPC runs below use no LLM and a
+deterministic hash stand-in for the embedding model (they measure pipeline behaviour, not embedding quality); the retrieval and live-agent runs further down use real models.
 
 ## Test suite
 
@@ -40,12 +40,23 @@ Hash stand-in embedder, temporary copy of this repo's tracked files, embedded Qd
 | new channel per call | 0.720 | 1.365 | 2.215 | 0.787 |
 | shared channel | 0.267 | 0.423 | 0.754 | 0.292 |
 
-## Retrieval quality
+## Retrieval quality (`make eval-local`)
 
-Not re-run in this pass (needs the real embedding model and a Qdrant server). The 22-question
-ablation in `docs/evaluation.md` (produced by `make eval`) is the source of the Recall@5 / MRR figures.
-CI re-checks a 5-question fixture (Recall >= 0.8) on every push.
+Real embedding model (`all-MiniLM-L6-v2`) and reranker, in-memory Qdrant, 28 questions (20 answerable, 8 unanswerable) over a `git archive` of commit `db35040` (136 files, 657 chunks), one run on the M1 above. Raw output: `eval/report.md`; the table and its reading are in `docs/evaluation.md`.
+
+| Strategy | Recall@5 (n=20) | MRR | p50 latency |
+|---|---|---|---|
+| dense | 0.60 | 0.47 | 10 ms |
+| lexical | 0.60 | 0.37 | 1 ms |
+| hybrid | 0.70 | 0.55 | 11 ms |
+| hybrid + rerank | 0.60 | 0.47 | 1134 ms |
+
+CI also re-checks a 5-question fixture (Recall >= 0.8) on every push.
+
+## Live agent eval (`make eval-agent LIVE=1`)
+
+`llama3.2:3b` through Ollama on the same M1, one run, 12 cases (fixture repo): [agent_eval_live.md](agent_eval_live.md), per-case answers in [agent_eval_live.json](agent_eval_live.json). The numbers and their caveats are in the top-level README.
 
 ## Not measured
 
-Live-LLM answer quality (grounded-citation rate, abstention), latency of a real local model on an 8 GB Mac.
+Latency of a larger local model on an 8 GB Mac (`qwen2.5:7b` took 159 s on one answer and was wrong, one observation, not a benchmark).

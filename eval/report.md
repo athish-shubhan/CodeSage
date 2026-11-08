@@ -1,15 +1,15 @@
 # CodeSage retrieval ablation report
 
-N = 22 hand-written questions against this repo's own content (collection=codebase). Small-N by design: this is a demo-scale benchmark, not a claim of statistical significance. The harness itself is corpus-agnostic.
+N = 28 hand-written questions (20 answerable, scored by Recall@K and MRR; 8 unanswerable) against this repo's own content (collection=codebase, git archive of commit db35040, in-memory Qdrant, CPU embeddings). Small-N by design: this is a demo-scale benchmark, not a claim of statistical significance. The harness itself is corpus-agnostic.
 
-| Strategy | Recall@K | MRR | Avg latency (ms) | Avg context tokens |
-|---|---|---|---|---|
-| dense only | 0.70 | 0.51 | 1056 | 2155 |
-| lexical (BM25) only | 0.55 | 0.40 | 32 | 2504 |
-| hybrid (dense + lexical, fused) | 0.70 | 0.45 | 760 | 2442 |
-| hybrid + reranker | 0.80 | 0.49 | 26018 | 2010 |
+| Strategy | Recall@K | Recall 95% CI | MRR | p50 latency (ms) | p95 latency (ms) | Avg context tokens |
+|---|---|---|---|---|---|---|
+| dense only | 0.60 | 0.40-0.80 | 0.47 | 10 | 13 | 1539 |
+| lexical (BM25) only | 0.60 | 0.40-0.80 | 0.37 | 1 | 1 | 1380 |
+| hybrid (dense + lexical, fused) | 0.70 | 0.50-0.90 | 0.55 | 11 | 13 | 1576 |
+| hybrid + reranker | 0.60 | 0.40-0.80 | 0.47 | 1134 | 1642 | 1719 |
 
-**Finding:** hybrid + reranker improved Recall@K by +0.10 over dense-only (0.70 -> 0.80), at +24962ms extra average latency.
+**Finding:** hybrid (dense + lexical, fused) improved Recall@K by +0.10 over dense-only (0.60 -> 0.70), at +1ms extra p50 latency.
 
 <!-- agent-reliability:start -->
 ## Agent reliability (`eval/agent_eval.py`)
@@ -25,7 +25,7 @@ The model's turns are scripted, so this mode tests the gateway's checks, not a m
 | Removals recorded at the right file lines | 4/4 injection cases |
 | Citations to injected lines reported ungrounded | 4/4 injection cases |
 | Detector on `injection_sentences.jsonl`: precision / recall | 0.90 / 0.78 (18 of 23 injections caught, 2 of 20 benign sentences flagged) |
-| Detector flags on ordinary code and docs (47 files, 3597 lines) | 1 |
+| Detector flags on ordinary code and docs (47 files, 3651 lines) | 1 |
 
 | Answer metric | Replay (scripted answers) | Live LLM |
 |---|---|---|
@@ -51,6 +51,6 @@ Benign sentences it flags:
 
 Flags in the ordinary-code corpus:
 
-- `README.md:18 (addressed_to_ai): Tool output is treated as untrusted data: sentences in it that read like instructions to the model are removed before it sees them and reported in the response, and the answer's code identifiers are c`
+- `README.md:18 (ignore_instructions): The fixture contains a planted "ignore previous instructions" comment, so the output also shows the injection guard removing it.`
 
 <!-- agent-reliability:end -->

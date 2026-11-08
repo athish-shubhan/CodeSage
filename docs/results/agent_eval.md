@@ -12,7 +12,7 @@ The model's turns are scripted, so this mode tests the gateway's checks, not a m
 | Removals recorded at the right file lines | 4/4 injection cases |
 | Citations to injected lines reported ungrounded | 4/4 injection cases |
 | Detector on `injection_sentences.jsonl`: precision / recall | 0.90 / 0.78 (18 of 23 injections caught, 2 of 20 benign sentences flagged) |
-| Detector flags on ordinary code and docs (47 files, 3597 lines) | 1 |
+| Detector flags on ordinary code and docs (47 files, 3651 lines) | 1 |
 
 | Answer metric | Replay (scripted answers) | Live LLM |
 |---|---|---|
@@ -38,6 +38,6 @@ Benign sentences it flags:
 
 Flags in the ordinary-code corpus:
 
-- `README.md:18 (addressed_to_ai): Tool output is treated as untrusted data: sentences in it that read like instructions to the model are removed before it sees them and reported in the response, and the answer's code identifiers are c`
+- `README.md:18 (ignore_instructions): The fixture contains a planted "ignore previous instructions" comment, so the output also shows the injection guard removing it.`
 
 <!-- agent-reliability:end -->

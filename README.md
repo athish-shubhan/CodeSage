@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/athish-shubhan/CodeSage/actions/workflows/ci.yml/badge.svg)](https://github.com/athish-shubhan/CodeSage/actions/workflows/ci.yml)
 
-A local-LLM coding assistant: index a repository, ask a question, get a streamed answer with `[file:start-end]` citations that are checked against what was actually retrieved. Retrieval is hybrid (dense vectors + BM25, optional cross-encoder rerank), the LLM runs locally behind an OpenAI-compatible API (Ollama, vLLM or llama.cpp), and nothing leaves your machine.
+A local-LLM coding assistant: index a repository, ask a question, get a streamed answer with `[file:start-end]` citations that are checked against what was actually retrieved. Retrieval is dense-vector by default (hybrid dense + BM25 fusion and a cross-encoder rerank are optional, see [ADR 0002](docs/adr/0002-dense-retrieval-by-default.md)), the LLM runs locally behind an OpenAI-compatible API (Ollama, vLLM or llama.cpp), and nothing leaves your machine.
 
 Why it exists: code Q&A tools tend to cite lines they never saw and will follow instructions planted in the repo they read. CodeSage treats retrieved text as untrusted, verifies every citation, and ships an eval gate in CI so those checks cannot silently regress.
 
@@ -27,7 +27,7 @@ Full stack (Traefik, Prometheus, Grafana, Qdrant server) with Docker: `cp .env.e
 flowchart LR
     C[Client: REST / WebSocket / SSE] --> T[Traefik]
     T --> G[gateway-api<br/>FastAPI, JWT, metrics]
-    G -- gRPC --> R[retrieval-service<br/>chunking, hybrid search, rerank]
+    G -- gRPC --> R["retrieval-service<br/>chunking, dense search (hybrid, rerank optional)"]
     R --> Q[(Qdrant)]
     G -- OpenAI-compatible API --> L[Ollama / vLLM / llama.cpp]
     G --> A[Agent loop<br/>search_code, expand_context, get_file]
@@ -47,13 +47,16 @@ All numbers are from commands in [docs/results/README.md](docs/results/README.md
 
 | What | Result | Source |
 |---|---|---|
-| Retrieval, 22 questions (20 answerable) on this repo, one run, no intervals (real embeddings, 2 CPUs) | Dense Recall@5 0.70 / MRR 0.51; hybrid 0.70 / 0.45; hybrid + rerank 0.80 / 0.49 at about 25x latency | `docs/evaluation.md` (`make eval`) |
+| Retrieval, 28 questions (20 answerable, 8 unanswerable) on this repo, one run, in-memory Qdrant, real embeddings, M1 | Recall@5 / MRR: dense 0.60 / 0.47; hybrid 0.70 / 0.55; hybrid + rerank 0.60 / 0.47. p50 latency 10 ms, 11 ms, 1134 ms | `docs/evaluation.md` (`make eval-local`) |
+| Live LLM agent eval, `llama3.2:3b` via Ollama, 12 cases, one run | Grounded-citation rate 1.00 (n=4 citations); unsupported-identifier rate 0.00 (n=3); abstention accuracy 0.92 (11 of 12); injection resistance 1.00 (n=4). Only 3 of 12 answers contained any citation | `docs/results/agent_eval_live.md` (`make eval-agent LIVE=1`) |
 | Re-ingest of an unchanged repo (129 files, 637 chunks) | 0 chunks re-embedded; one edited file re-embeds 3 | `make bench-ingest` |
 | Shared vs per-call gRPC channel (1000 loopback calls) | p50 0.72 ms to 0.27 ms | `make bench-grpc` |
 | Injection guard, 43 labeled sentences | catches 18 of 23 injections, flags 2 of 20 benign; 1 flag in 47 ordinary files | `make eval-agent` |
 | Tests | gateway 139, retrieval 71, integration 6, eval 32 passing; ruff clean | `docs/results/README.md` |
 
-The default is dense-only retrieval. With 20 answerable questions the strategies are not statistically distinguishable (0.70 vs 0.80 Recall@5 is 14 vs 16 questions, and 95% Wilson intervals for 14/20 and 16/20 overlap heavily at roughly 0.48 to 0.86 and 0.58 to 0.92), so the choice rests on simplicity and on hybrid not winning, not on a measured advantage. The recorded table is from the 22-question set of the initial commit; `eval/qa_pairs.jsonl` has since grown to 28 (6 more unanswerable questions) and the table has not been re-run, so it cannot be reproduced exactly from the current file.
+The default is dense-only retrieval. With 20 answerable questions the strategies are not statistically distinguishable (0.60 vs 0.70 Recall@5 is 12 vs 14 questions, and the 95% bootstrap intervals, 0.40 to 0.80 and 0.50 to 0.90, overlap heavily), so the choice rests on simplicity, not on a measured advantage; this run, if anything, leans toward hybrid, and an earlier run on a 22-question set had hybrid tied with dense and the reranker best, so the ordering is not stable at this size. The 20 and 8 are the answerable and unanswerable question counts; Recall@5 and MRR are computed over the 20 answerable ones.
+
+The live-LLM row is a single run of a 3B model over 12 hand-written cases on a small fixture repo, so treat each rate as an anecdote: the grounded-citation and identifier rates are computed over 4 and 3 items. The model often did not cite at all (3 of 12 answers had a citation) and sometimes printed a tool call as text instead of making one; "grounded" means the cited range was among the retrieved chunks, not that it supports the claim. Before the answer prompt spelled out the citation format with an example, the same run produced no citations at all (0 of 12 answers).
 
 ## Tests and evaluation
 
@@ -61,7 +64,9 @@ The default is dense-only retrieval. With 20 answerable questions the strategies
 make test test-retrieval test-eval test-integration   # unit + gRPC integration, no Docker, LLM mocked
 make lint                                              # ruff
 make eval-agent                                        # injection / citation / abstention gate, no LLM
-make eval                                              # retrieval ablation (needs the stack and `make ingest-self`)
+make eval-agent LIVE=1                                 # same cases against the configured LLM (e.g. Ollama llama3.2:3b)
+make eval-local                                        # retrieval ablation, no Docker (in-memory Qdrant)
+make eval                                              # same ablation against a running stack (needs `make ingest-self`)
 ```
 
 CI (GitHub Actions) runs lint, all test suites, the agent reliability gate (blocking), a retrieval-quality gate on a fixture corpus (blocking), the MCP adapter tests, image builds with non-root and read-only checks, and compose/k8s validation.
@@ -69,9 +74,8 @@ CI (GitHub Actions) runs lint, all test suites, the agent reliability gate (bloc
 ## Limitations
 
 - Demo project, not a production service: one demo user from environment variables, a placeholder JWT secret you must change, no TLS, no multi-turn memory.
-- Retrieval benchmark is 22 questions (20 answerable) on one corpus, with no confidence intervals in the recorded table. Answer quality with a live model (grounded-citation rate, abstention) is not measured; the agent eval runs scripted model turns.
-- Small local models follow the tool-calling protocol unreliably (a 0.5B model did not; 3B and larger are not measured here). `/ws/chat` and `/chat` do not need tool calling and are what the quick start uses.
-- The quick start path with a real Ollama model was not run in the environment that prepared this repository; its client, gateway and retrieval path were exercised with a scripted LLM and a stand-in embedder.
+- Retrieval benchmark is 28 questions (20 answerable, 8 unanswerable) on one corpus, one run. Answer quality with a live model was measured once, with a 3B model on 12 cases; the CI agent eval runs scripted model turns.
+- Small local models follow the tool-calling protocol unreliably (a 0.5B model did not; `llama3.2:3b` handled it in some cases and printed the call as text in others in the live eval; larger models are not measured). `/ws/chat` and `/chat` do not need tool calling and are what the quick start uses.
 - The injection detector figures (18 of 23, 2 of 20) come from sentences and rules written by the same author, so they are a regression guard, not an estimate of real-world detection; the five known misses were kept in the set on purpose.
 - The injection regex misses paraphrased, translated and obfuscated injections ([ADR 0006](docs/adr/0006-untrusted-tool-output.md)).
 - Only Ollama has been tested live for tool calling.
@@ -80,7 +84,7 @@ CI (GitHub Actions) runs lint, all test suites, the agent reliability gate (bloc
 
 ![Demo](docs/demo.gif)
 
-*`make demo` with `llama3.2:3b` on an 8 GB M1: ingests the fixture repo, strips two planted instruction-like comments before they reach the model, and streams an answer that correctly spots the fixture's planted bug (large unapproved refunds return `True`). This small model emitted no `path:lines` citations, so both citation lists are empty; larger models cite more reliably.*
+*One real run of `make demo` with `llama3.2:3b` on an 8 GB M1 (the recording is not edited): it ingests the fixture repo, strips two planted instruction-like comments before they reach the model, and streams an answer whose citation is checked against the retrieved chunks. Here the citation `auth.py:12-13` was among the retrieved chunks, so it is reported as grounded, but it is not the right place for the claim and the answer misses the fixture's planted bug (large unapproved refunds return `True`). The check says a citation was retrieved, not that the answer is correct. Across 7 earlier runs of the same question with the same prompt the model cited every time and 6 of 7 answers had only grounded citations; answer quality varied, and several answers were muddled about the bug. 3B models are weak at this.*
 
 ## Design decisions
 
