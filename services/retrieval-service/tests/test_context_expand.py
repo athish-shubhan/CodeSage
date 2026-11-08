@@ -98,3 +98,16 @@ def test_repo_root_that_is_itself_a_symlink_still_works(tmp_path):
 
     assert context_expand.read_file("rootlink", "ok.py")["text"].startswith("def ok")
     assert context_expand.read_file("rootlink", "leak.md") is None
+
+
+def test_files_that_ingest_would_not_index_cannot_be_read_back(tmp_path):
+    (tmp_path / ".env").write_text("API_KEY=secret\n")
+    (tmp_path / "key.pem").write_text("-----BEGIN PRIVATE KEY-----\n")
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "config.toml").write_text("x = 1\n")
+    (tmp_path / "ok.py").write_text("x = 1\n")
+    context_expand.set_repo_root("noindex", str(tmp_path))
+    for rel in (".env", "key.pem", ".git/config.toml"):
+        assert context_expand.read_file("noindex", rel) is None
+        assert context_expand.expand("noindex", rel, 1, 1) is None
+    assert context_expand.read_file("noindex", "ok.py")["text"] == "x = 1\n"

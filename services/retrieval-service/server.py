@@ -58,6 +58,12 @@ def _traced(method):
 
     return wrapper
 
+# Server-side ceilings, so a caller that bypasses the gateway's validation cannot ask for unbounded work.
+MAX_QUERY_CHARS = 16_000
+MAX_TOP_K = 50
+MAX_EXTRA_LINES = 200
+MAX_GET_FILE_BYTES = 1_000_000
+
 GRPC_PORT = int(os.environ.get("GRPC_PORT", "50051"))
 METRICS_PORT = int(os.environ.get("METRICS_PORT", "9101"))
 DEFAULT_COLLECTION = os.environ.get("DEFAULT_COLLECTION", "codebase")
@@ -81,6 +87,8 @@ class RetrievalServicer(retrieval_pb2_grpc.RetrievalServicer):
             context.abort(grpc.StatusCode.CANCELLED, "client deadline passed or client disconnected")
 
     def _search(self, request, context):
+        if len(request.query) > MAX_QUERY_CHARS:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"query longer than {MAX_QUERY_CHARS} characters")
         SEARCH_REQUESTS.inc()
         if request.use_reranker:
             RERANK_REQUESTS.inc()
@@ -88,7 +96,7 @@ class RetrievalServicer(retrieval_pb2_grpc.RetrievalServicer):
             result = pipeline.search(
                 collection=request.collection or DEFAULT_COLLECTION,
                 query=request.query,
-                top_k=request.top_k or 5,
+                top_k=min(request.top_k or 5, MAX_TOP_K),
                 max_tokens=request.max_context_tokens or DEFAULT_MAX_CONTEXT_TOKENS,
                 strategy=request.strategy or "dense",
                 use_reranker=request.use_reranker,
@@ -146,7 +154,7 @@ class RetrievalServicer(retrieval_pb2_grpc.RetrievalServicer):
             request.source_path,
             request.start_line,
             request.end_line,
-            request.extra_lines or 20,
+            min(request.extra_lines or 20, MAX_EXTRA_LINES),
         )
         return retrieval_pb2.ExpandContextResponse(text=text or "", found=text is not None)
 
@@ -154,7 +162,8 @@ class RetrievalServicer(retrieval_pb2_grpc.RetrievalServicer):
     def GetFile(self, request, context):
         collection = request.collection or DEFAULT_COLLECTION
         pipeline.restore(collection)
-        result = context_expand.read_file(collection, request.source_path, request.max_bytes or 20_000)
+        result = context_expand.read_file(collection, request.source_path,
+                                        min(request.max_bytes or 20_000, MAX_GET_FILE_BYTES))
         if result is None:
             return retrieval_pb2.GetFileResponse(found=False)
         return retrieval_pb2.GetFileResponse(text=result["text"], found=True, truncated=result["truncated"])
@@ -165,6 +174,8 @@ class RetrievalServicer(retrieval_pb2_grpc.RetrievalServicer):
 
 
 def serve() -> None:
+    if not pipeline.allowed_roots():
+        log.warning("INGEST_ALLOWED_ROOTS is not set: IngestRepo will index any directory this process can read")
     start_http_server(METRICS_PORT)
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=8))
     retrieval_pb2_grpc.add_RetrievalServicer_to_server(RetrievalServicer(), server)

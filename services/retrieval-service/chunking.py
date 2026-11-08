@@ -13,6 +13,10 @@ TEXT_EXTENSIONS = {
 }
 
 
+# Larger files are skipped: they are almost always generated or data, and one would otherwise be read into
+# memory whole and embedded as hundreds of chunks.
+MAX_FILE_BYTES = 1_000_000
+
 SKIP_DIRS = {
     ".git", "node_modules", "__pycache__", ".venv", "venv",
     ".pytest_cache", ".mypy_cache", ".ruff_cache",
@@ -39,7 +43,13 @@ def iter_source_files(repo_path: str, include_globs: list[str] | None = None):
             if ext not in TEXT_EXTENSIONS:
                 continue
             full = os.path.join(root, fname)
-            if not os.path.realpath(full).startswith(real_root + os.sep):
+            real = os.path.realpath(full)
+            if not real.startswith(real_root + os.sep):
+                continue
+            try:
+                if os.path.getsize(real) > MAX_FILE_BYTES:
+                    continue
+            except OSError:
                 continue
             rel = os.path.relpath(full, repo_path)
             if include_globs and not any(_matches(rel, g) for g in include_globs):

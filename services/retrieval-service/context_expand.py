@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 
+from chunking import SKIP_DIRS, TEXT_EXTENSIONS
+
 _repo_roots: dict[str, str] = {}
 
 
@@ -23,7 +25,14 @@ def resolve_inside(root: str, rel_path: str) -> str | None:
     not let a read escape the repo root that a plain `../` check guards."""
     real_root = os.path.realpath(root)
     full = os.path.realpath(os.path.join(real_root, rel_path))
-    return full if full.startswith(real_root + os.sep) else None
+    if not full.startswith(real_root + os.sep):
+        return None
+    # Only what ingest would index: a `.env`, a key file or `.git/config` inside the repo is not
+    # source, and an injected instruction must not be able to make the agent read it back.
+    parts = os.path.relpath(full, real_root).split(os.sep)
+    if os.path.splitext(parts[-1])[1] not in TEXT_EXTENSIONS or any(p in SKIP_DIRS for p in parts[:-1]):
+        return None
+    return full
 
 
 def expand(collection: str, source_path: str, start_line: int, end_line: int, extra_lines: int = 20) -> str | None:

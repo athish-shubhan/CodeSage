@@ -104,3 +104,12 @@ def test_every_chunk_of_this_repo_starts_on_its_reported_line():
             assert all(t.strip() == file_lines[c.start_line - 1 + i].strip() for i, t in enumerate(text_lines)), rel
             checked += 1
     assert checked > 100
+
+
+def test_oversized_files_are_not_indexed(tmp_path, monkeypatch):
+    import chunking
+
+    (tmp_path / "small.py").write_text("x = 1\n")
+    (tmp_path / "big.py").write_text("y = 2\n" * 100)
+    monkeypatch.setattr(chunking, "MAX_FILE_BYTES", 50)
+    assert [rel for _, rel in chunking.iter_source_files(str(tmp_path))] == ["small.py"]
