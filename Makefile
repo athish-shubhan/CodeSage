@@ -1,4 +1,4 @@
-.PHONY: demo up up-gpu up-vllm up-llamacpp down logs pull-model ingest-self lint test test-retrieval test-eval test-integration eval eval-agent smoke bench-grpc bench-ingest
+.PHONY: demo up up-gpu up-vllm up-llamacpp down logs pull-model ingest-self lint test test-retrieval test-eval test-integration eval eval-local eval-agent smoke bench-grpc bench-ingest
 
 # No-Docker demo (fits an 8 GB Mac): ingests eval/fixture/repo, asks a question,
 # streams a cited answer from a local Ollama model. See README "Quick start".
@@ -58,13 +58,23 @@ eval:
 	cd eval && python3 run_eval.py --strategy dense
 	cd eval && python3 ablation.py
 
+# Same ablation with no Docker: in-memory Qdrant, ingests a git archive of HEAD,
+# writes eval/report.md (see scripts/eval_local.sh).
+eval-local:
+	bash scripts/eval_local.sh
+
 # Agent reliability eval (injection guard, citation grounding, abstention) with
 # scripted model turns; no stack needed. Add LIVE=1 to use the configured LLM.
 eval-agent:
 	python3 -m grpc_tools.protoc -I services/retrieval-service/proto \
 		--python_out=eval --grpc_python_out=eval \
 		services/retrieval-service/proto/retrieval.proto
-	python3 eval/agent_eval.py --gate --report eval/report.md $(if $(LIVE),--live,)
+ifeq ($(LIVE),1)
+	python3 eval/agent_eval.py --live --report docs/results/agent_eval_live.md \
+		--json-out docs/results/agent_eval_live.json
+else
+	python3 eval/agent_eval.py --gate --report eval/report.md
+endif
 
 smoke:
 	bash scripts/smoke_test.sh

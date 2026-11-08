@@ -25,11 +25,13 @@ REPORT_PATH = Path(__file__).parent / "report.md"
 AGENT_SECTION_RE = re.compile(r"<!-- agent-reliability:start -->.*?<!-- agent-reliability:end -->", re.DOTALL)
 
 
-def render_report(rows: list[dict], n: int, corpus_note: str) -> str:
+def render_report(rows: list[dict], n: int, corpus_note: str, n_scored: int | None = None) -> str:
+    n_scored = n if n_scored is None else n_scored
     lines = [
         "# CodeSage retrieval ablation report",
         "",
-        f"N = {n} hand-written questions against this repo's own content "
+        f"N = {n} hand-written questions ({n_scored} answerable, scored by Recall@K and MRR; "
+        f"{n - n_scored} unanswerable) against this repo's own content "
         f"({corpus_note}). Small-N by design: this is a demo-scale benchmark, "
         "not a claim of statistical significance. The harness itself is corpus-agnostic.",
         "",
@@ -72,16 +74,16 @@ def main() -> None:
     args = parser.parse_args()
 
     rows = []
-    n = 0
+    n = n_scored = 0
     for strategy, use_reranker, label in CONFIGS:
         summary = run(args.target, args.collection, args.top_k, strategy, use_reranker)
-        n = summary["n"]
+        n, n_scored = summary["n"], summary.get("n_scored", summary["n"])
         rows.append({**summary, "label": label})
         print(f"{label}: recall@{args.top_k}={summary['recall_at_k']:.2f} mrr={summary['mrr']:.2f}")
 
     note = f"collection={args.collection}" + (f", {args.note}" if args.note else "")
     kept = AGENT_SECTION_RE.search(args.report.read_text()) if args.report.exists() else None
-    args.report.write_text(render_report(rows, n, note) + "\n" + (f"\n{kept.group(0)}\n" if kept else ""))
+    args.report.write_text(render_report(rows, n, note, n_scored) + "\n" + (f"\n{kept.group(0)}\n" if kept else ""))
     print(f"\nWrote {args.report}")
 
 

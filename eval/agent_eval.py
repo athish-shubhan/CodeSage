@@ -367,7 +367,7 @@ async def evaluate(live: bool = False) -> dict:
 
 def _fmt(v, n=None) -> str:
     if v is None:
-        return "n/a"
+        return "n/a" if n is None else f"n/a (n={n})"
     return f"{v:.2f}" + (f" (n={n})" if n is not None else "")
 
 
@@ -384,6 +384,14 @@ def render_section(summary: dict) -> str:
         "with tools and retrieval served from the fixture files.",
         "",
     ]
+    if summary["mode"] == "live":
+        lines += [
+            f"Model: `{settings.llm_model}` at `{settings.llm_base_url}` (the model's default sampling settings), "
+            f"one run over the {summary['cases']} cases. With this few cases each rate is a rough indication, not an estimate; "
+            "the n beside each rate is the number of items it is computed over. The model's own answers are not "
+            "compared with hand labels, so there are no pass/fail label checks in this mode.",
+            "",
+        ]
     if summary["mode"] == "replay":
         lines += [
             "The model's turns are scripted, so this mode tests the gateway's checks, not a model. "
@@ -429,6 +437,9 @@ def render_section(summary: dict) -> str:
             "injection the regex misses (the second layer: delimiters and the system-prompt rule) is not measured here.",
             "",
         ]
+    if summary["mode"] == "live":
+        lines.append(REPORT_END)  # detector figures belong to the replay report, not to a model run
+        return "\n".join(lines)
     if d["missed"]:
         lines += ["Injections the detector misses (known limits, see `docs/adr/0006-untrusted-tool-output.md`):", ""]
         lines += [f"- {t}" for t in d["missed"]] + [""]
@@ -456,12 +467,16 @@ def main() -> None:
     parser.add_argument("--live", action="store_true", help="use the LLM configured by GATEWAY_LLM_* instead of scripts")
     parser.add_argument("--gate", action="store_true", help="exit 1 if any deterministic check fails")
     parser.add_argument("--report", type=Path, help="write/replace the agent-reliability section of this markdown file")
+    parser.add_argument("--json-out", type=Path, help="also write the full summary, per-case results included, to this JSON file")
     parser.add_argument("--per-case", action="store_true", help="include per-case results in the JSON output")
     args = parser.parse_args()
 
     summary = asyncio.run(evaluate(live=args.live))
     shown = summary if args.per_case else {k: v for k, v in summary.items() if k != "per_case"}
     print(json.dumps(shown, indent=2, ensure_ascii=False))
+    if args.json_out:
+        args.json_out.parent.mkdir(parents=True, exist_ok=True)
+        args.json_out.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n")
     if args.report:
         write_section(args.report, render_section(summary))
     if args.gate and summary["failures"]:

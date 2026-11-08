@@ -155,7 +155,7 @@ A few components that might be expected here were left out, on purpose:
 - **A dedicated query-decomposition stage.** Breaking a complex question into sub-questions is exactly what the agent's iterative `search_code` calls already do. A separate decomposition module would duplicate that. This means decomposition only happens in `/agent` mode, not in the single-shot `/chat` path, which is an explicit scope boundary.
 - **PDF or web ingestion.** The corpus this system actually serves is source code and Markdown docs. `chunking.py`'s `TEXT_EXTENSIONS` stays scoped to that; parsers for formats nothing here produces would be unused code.
 - **Redis or another shared cache.** The gateway is stateless and the retrieval-service rebuilds its in-memory index from Qdrant, so there is no state that needs a second store.
-- **A torch-free embedding runtime (ONNX via fastembed).** Likely a large cut in image size and cold start, and it supports the same MiniLM model and cross-encoder. Not done in this pass because it has to be measured against the current sentence-transformers path (same questions, same corpus) before switching, and there was not enough free disk to hold both runtimes for that comparison.
+- **A torch-free embedding runtime (ONNX via fastembed).** Likely a large cut in image size and cold start, and it supports the same MiniLM model and cross-encoder. Not done yet because it has to be measured against the current sentence-transformers path (same questions, same corpus) before switching, and there was not enough free disk to hold both runtimes for that comparison.
 
 ## Containers
 

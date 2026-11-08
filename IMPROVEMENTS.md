@@ -43,7 +43,7 @@ Branch `improve/round-1`, stacked on `reliability-layer` (athish-shubhan/CodeSag
 
 ### Not done
 
-- The `retrieval-smoke` job (real embedder) cannot run in this environment; CI runs it.
+- The `retrieval-smoke` job (real embedder) was not run locally at the time; it runs in CI.
 - A symlink's target is only checked at ingest and read time; a link that is retargeted between the two is checked again at read time, but an already-indexed chunk keeps its old content until the next ingest.
 
 ## Round 2: batched ingest, request bounds and insecure-default warnings, bounded metric labels
@@ -131,7 +131,7 @@ Branch `improve/round-3`, stacked on `improve/round-2` (athish-shubhan/CodeSage#
 
 ### Not done
 
-- The compose and k8s changes were validated as YAML only; there is no Docker daemon in this environment to bring the stack up. `make ingest-self` uses `/data/codesage-agent`, inside the new allowlist.
+- The compose and k8s changes were validated as YAML only; the stack was not brought up with Docker for this round. `make ingest-self` uses `/data/codesage-agent`, inside the new allowlist.
 - Generation checks cover ingests through any replica, but not someone editing Qdrant by hand.
 - The gateway still forwards gRPC and LLM error details to clients verbatim (internal hostnames can appear in them).
 
@@ -259,7 +259,7 @@ Branch `improve/round-6`, stacked on `improve/round-5` (athish-shubhan/CodeSage#
 ### Not done
 
 - Ingest serialization is per process, not across replicas.
-- The live column of the eval report still has not been run: no model weights are reachable from this environment (Hugging Face, the Ollama registry and GitHub releases are blocked by the proxy).
+- The live column of the eval report had not been run at this point; it has since been run with a local 3B model, see `docs/results/agent_eval_live.md`.
 
 ## Round 7: non-root containers, images started in CI
 
@@ -279,7 +279,7 @@ Branch `improve/round-7`, stacked on `improve/round-6` (athish-shubhan/CodeSage#
 
 ### Verification
 
-There is no Docker daemon in this environment, so neither change could be run here; the first run of both was this PR's CI. Both `build-images` jobs passed the new step on its first run (13/13 checks green): each image started, answered its health probe, and ran unprivileged; the gateway job's log reads `running as uid 10001`. The k8s files were checked to parse, as CI's `k8s-manifests` job does; they have not been applied to a cluster. No Python code changed, so the test suites are as in round 6.
+Neither change was run locally with Docker; the first run of both was this PR's CI. Both `build-images` jobs passed the new step on its first run (13/13 checks green): each image started, answered its health probe, and ran unprivileged; the gateway job's log reads `running as uid 10001`. The k8s files were checked to parse, as CI's `k8s-manifests` job does; they have not been applied to a cluster. No Python code changed, so the test suites are as in round 6.
 
 ### Not done
 
